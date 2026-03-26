@@ -1,6 +1,10 @@
+mod lexer;
+
 mod utils;
 
 use wasm_bindgen::prelude::*;
+
+use crate::lexer::Lexer;
 
 #[wasm_bindgen]
 extern "C" {
@@ -8,6 +12,9 @@ extern "C" {
 }
 
 #[wasm_bindgen]
-pub fn greet() {
-    web_sys::console::log_1(&format!("Console test").into());
+pub fn wasm_init() {
+    web_sys::console::log_1(&format!("WASM running").into());
+
+    let mut lexer = Lexer::new("int main() { print(); }");
+    lexer.read();
 }
