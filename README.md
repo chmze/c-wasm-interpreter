@@ -7,3 +7,11 @@ Work in progress.
 ## Build
 
 `npm i --legacy-peer-deps`
+
+## Run
+
+`npm run dev`
+
+## Test
+
+`cargo test`
