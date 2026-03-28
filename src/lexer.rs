@@ -1,7 +1,25 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StringTokenProps {
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LexTokenType {
-    Keyword,
+    Int,
     Identifier,
+
+    Numeral,
+    String(StringTokenProps),
+
+    Assign,
+
+    Semi,
+
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+
     EOF,
     Unknown,
 }
@@ -46,6 +64,13 @@ impl Lexer {
         LexToken::new(ty, self.pos, self.pos + 1, &self.current_ch().to_string())
     }
 
+    fn make_token_advance(&mut self, ty: LexTokenType) -> LexToken {
+        let token = self.make_token(ty);
+        self.read_ch();
+
+        token
+    }
+
     fn make_token_pos(&self, ty: LexTokenType, start: usize, end: usize) -> LexToken {
         LexToken::new(ty, start, end, self.get_literal(start, end))
     }
@@ -75,7 +100,7 @@ impl Lexer {
         let literal = self.get_literal(start, end);
 
         match literal {
-            "int" => LexTokenType::Keyword,
+            "int" => LexTokenType::Int,
             _ => LexTokenType::Identifier,
         }
     }
@@ -95,6 +120,39 @@ impl Lexer {
         self.make_token_pos(ty, start, end)
     }
 
+    fn read_numeral(&mut self) -> LexToken {
+        let start = self.pos;
+
+        loop {
+            let ch = self.read_ch();
+            if !ch.is_numeric() {
+                break;
+            }
+        }
+
+        let end = self.pos;
+        self.make_token_pos(LexTokenType::Numeral, start, end)
+    }
+
+    fn read_string(&mut self) -> LexToken {
+        let start = self.pos;
+
+        loop {
+            let ch = self.read_ch();
+            if ch == '"' {
+                self.read_ch();
+                break;
+            } else if ch == '\0' {
+                break;
+            }
+        }
+
+        let end = self.pos;
+        let val = self.get_literal(start+1, end-1);
+
+        self.make_token_pos(LexTokenType::String(StringTokenProps { value: val.into() }), start, end)
+    }
+
     fn skip_whitespace(&mut self) {
         while self.current_ch().is_whitespace() {
             self.read_ch();
@@ -107,8 +165,16 @@ impl Lexer {
         let ch = self.current_ch();
         match ch {
             ch if ch.is_alphabetic() => self.read_word(),
-            '\0' => self.make_token(LexTokenType::EOF),
-            _ => self.make_token(LexTokenType::Unknown),
+            ch if ch.is_numeric() => self.read_numeral(),
+            '"' => self.read_string(),
+            '=' => self.make_token_advance(LexTokenType::Assign),
+            ';' => self.make_token_advance(LexTokenType::Semi),
+            '{' => self.make_token_advance(LexTokenType::LBrace),
+            '}' => self.make_token_advance(LexTokenType::RBrace),
+            '(' => self.make_token_advance(LexTokenType::LParen),
+            ')' => self.make_token_advance(LexTokenType::RParen),
+            '\0' => self.make_token_advance(LexTokenType::EOF),
+            _ => self.make_token_advance(LexTokenType::Unknown),
         }
     }
 
@@ -134,15 +200,41 @@ mod tests {
 
     #[test]
     fn simple_words() {
-        let mut lexer = Lexer::new("int main");
+        let mut lexer = Lexer::new("int main \"string test\"");
         let res = lexer.read();
 
-        assert_eq!(res.len(), 3);
+        assert_eq!(res.len(), 4);
         assert_eq!(res[0].literal, "int");
-        assert_eq!(res[0].ty, LexTokenType::Keyword);
+        assert_eq!(res[0].ty, LexTokenType::Int);
         assert_eq!(res[1].literal, "main");
         assert_eq!(res[1].ty, LexTokenType::Identifier);
-        assert_eq!(res[2].ty, LexTokenType::EOF);
+        assert_eq!(res[2].ty, LexTokenType::String(StringTokenProps { value: "string test".into() }));
+        assert_eq!(res[3].ty, LexTokenType::EOF);
+    }
+
+    #[test]
+    fn simple_numerals() {
+        //let mut lexer = Lexer::new("0x123");
+    }
+
+    #[test]
+    fn simple() {
+        let mut lexer = Lexer::new("int main() { int i = 5; }");
+        let res = lexer.read();
+
+        assert_eq!(res.len(), 12);
+        assert_eq!(res[0].ty, LexTokenType::Int);
+        assert_eq!(res[1].ty, LexTokenType::Identifier);
+        assert_eq!(res[2].ty, LexTokenType::LParen);
+        assert_eq!(res[3].ty, LexTokenType::RParen);
+        assert_eq!(res[4].ty, LexTokenType::LBrace);
+        assert_eq!(res[5].ty, LexTokenType::Int);
+        assert_eq!(res[6].ty, LexTokenType::Identifier);
+        assert_eq!(res[7].ty, LexTokenType::Assign);
+        assert_eq!(res[8].ty, LexTokenType::Numeral);
+        assert_eq!(res[9].ty, LexTokenType::Semi);
+        assert_eq!(res[10].ty, LexTokenType::RBrace);
+        assert_eq!(res[11].ty, LexTokenType::EOF);
     }
 
 }
