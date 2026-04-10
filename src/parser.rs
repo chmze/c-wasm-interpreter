@@ -15,6 +15,7 @@ pub struct ASTFunc {
 pub enum ASTNodeType {
     Root(ASTRoot),
     Func(ASTFunc),
+    EOF,
 }
 
 pub struct ASTNode {
@@ -53,7 +54,6 @@ impl Parser {
 
     fn return_checkpoint(&mut self) {
         self.set_pos(self.checkpoint);
-        self.checkpoint = 0;
     }
 
     fn current(&self) -> &LexToken {
@@ -85,12 +85,28 @@ impl Parser {
         })))
     }
 
-    fn parse_current(&mut self) {
-        self.try_parse_func();
+    fn parse_current(&mut self) -> ASTNode {
+        if self.current().ty == LexTokenType::EOF {
+            return ASTNode::new(ASTNodeType::EOF);
+        }
+
+        self.set_checkpoint(self.pos);
+        if let Some(node) = self.try_parse_func() {
+            self.return_checkpoint();
+            return node;
+        }
+
+        ASTNode::new(ASTNodeType::EOF)
     }
 
-    pub fn parse(&mut self) {
-        self.parse_current();
+    pub fn parse(&mut self) -> ASTNode {
+        let mut root = ASTRoot { statements: Vec::new() };
+
+        let cur = self.parse_current();
+        root.statements.push(cur);
+
+        let root = ASTNode::new(ASTNodeType::Root(root));
+        root
     }
 }
 
