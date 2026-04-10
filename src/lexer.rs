@@ -9,7 +9,7 @@ pub enum LexTokenType {
     Identifier,
 
     Numeral,
-    String(StringTokenProps),
+    String,
 
     Assign,
 
@@ -25,11 +25,19 @@ pub enum LexTokenType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LexTokenProps {
+    None,
+    String(StringTokenProps),
+    Numeral,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LexToken {
     pub ty: LexTokenType,
     pub start: usize, // inclusive
     pub end: usize, // exclusive
     pub literal: String,
+    pub props: LexTokenProps,
 }
 
 impl LexToken {
@@ -39,6 +47,17 @@ impl LexToken {
             start,
             end,
             literal: literal.into(),
+            props: LexTokenProps::None,
+        }
+    }
+
+    pub fn new_with_props(ty: LexTokenType, start: usize, end: usize, literal: &str, props: LexTokenProps) -> Self {
+        Self {
+            ty,
+            start,
+            end,
+            literal: literal.into(),
+            props,
         }
     }
 }
@@ -71,8 +90,8 @@ impl Lexer {
         token
     }
 
-    fn make_token_pos(&self, ty: LexTokenType, start: usize, end: usize) -> LexToken {
-        LexToken::new(ty, start, end, self.get_literal(start, end))
+    fn make_token_pos(&self, ty: LexTokenType, start: usize, end: usize, props: LexTokenProps) -> LexToken {
+        LexToken::new_with_props(ty, start, end, self.get_literal(start, end), props)
     }
 
     fn current_ch(&self) -> char {
@@ -117,7 +136,7 @@ impl Lexer {
 
         let end = self.pos;
         let ty = self.get_word_type(start, end);
-        self.make_token_pos(ty, start, end)
+        self.make_token_pos(ty, start, end, LexTokenProps::None)
     }
 
     fn read_numeral(&mut self) -> LexToken {
@@ -131,7 +150,7 @@ impl Lexer {
         }
 
         let end = self.pos;
-        self.make_token_pos(LexTokenType::Numeral, start, end)
+        self.make_token_pos(LexTokenType::Numeral, start, end, LexTokenProps::Numeral)
     }
 
     fn read_string(&mut self) -> LexToken {
@@ -150,7 +169,7 @@ impl Lexer {
         let end = self.pos;
         let val = self.get_literal(start+1, end-1);
 
-        self.make_token_pos(LexTokenType::String(StringTokenProps { value: val.into() }), start, end)
+        self.make_token_pos(LexTokenType::String, start, end, LexTokenProps::String(StringTokenProps { value: val.into() }))
     }
 
     fn skip_whitespace(&mut self) {
@@ -208,7 +227,8 @@ mod tests {
         assert_eq!(res[0].ty, LexTokenType::Int);
         assert_eq!(res[1].literal, "main");
         assert_eq!(res[1].ty, LexTokenType::Identifier);
-        assert_eq!(res[2].ty, LexTokenType::String(StringTokenProps { value: "string test".into() }));
+        assert_eq!(res[2].ty, LexTokenType::String);
+        assert_eq!(res[2].props, LexTokenProps::String(StringTokenProps { value: "string test".into() }));
         assert_eq!(res[3].ty, LexTokenType::EOF);
     }
 
