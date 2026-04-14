@@ -5,7 +5,14 @@ pub struct StringTokenProps {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LexTokenType {
+    Unsigned,
+    Signed,
+    Char,
+    Short,
     Int,
+    Float,
+    Long,
+    Double,
     Identifier,
 
     Numeral,
@@ -119,7 +126,14 @@ impl Lexer {
         let literal = self.get_literal(start, end);
 
         match literal {
+            "unsigned" => LexTokenType::Unsigned,
+            "signed" => LexTokenType::Signed,
+            "char" => LexTokenType::Char,
+            "short" => LexTokenType::Short,
             "int" => LexTokenType::Int,
+            "long" => LexTokenType::Long,
+            "float" => LexTokenType::Float,
+            "double" => LexTokenType::Double,
             _ => LexTokenType::Identifier,
         }
     }
@@ -136,6 +150,7 @@ impl Lexer {
 
         let end = self.pos;
         let ty = self.get_word_type(start, end);
+
         self.make_token_pos(ty, start, end, LexTokenProps::None)
     }
 
@@ -255,6 +270,18 @@ mod tests {
         assert_eq!(res[9].ty, LexTokenType::Semi);
         assert_eq!(res[10].ty, LexTokenType::RBrace);
         assert_eq!(res[11].ty, LexTokenType::EOF);
+    }
+
+    #[test]
+    fn simple_types() {
+        let mut lexer = Lexer::new("unsigned long long int");
+        let res = lexer.read();
+
+        assert_eq!(res.len(), 5);
+        assert_eq!(res[0].ty, LexTokenType::Unsigned);
+        assert_eq!(res[1].ty, LexTokenType::Long);
+        assert_eq!(res[2].ty, LexTokenType::Long);
+        assert_eq!(res[3].ty, LexTokenType::Int);
     }
 
 }

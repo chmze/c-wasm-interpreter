@@ -6,7 +6,7 @@ mod utils;
 
 use wasm_bindgen::prelude::*;
 
-use crate::lexer::Lexer;
+use crate::{interpreter::Interpreter, lexer::Lexer};
 
 #[wasm_bindgen]
 extern "C" {
@@ -19,4 +19,6 @@ pub fn wasm_init() {
 
     let mut lexer = Lexer::new("int main() { print(); }");
     lexer.read();
+
+    let _ = Interpreter::new();
 }
