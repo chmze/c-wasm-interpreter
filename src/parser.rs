@@ -178,7 +178,9 @@ impl Parser {
             _ => return None,
         };
 
-        self.read();
+        if explicit_signed.is_none() || self.current().ty != LexTokenType::Identifier {
+            self.read();
+        }
 
         if ty == ASTDataType::Short || ty == ASTDataType::Long || ty == ASTDataType::LongLong {
             _ = self.try_parse_current(LexTokenType::Int); // TODO: add error handling
@@ -191,10 +193,25 @@ impl Parser {
 
     fn try_parse_func_params(&mut self) -> Option<Vec<ASTFuncParam>> {
         let _ = self.try_parse_current(LexTokenType::LParen)?;
-        // let params = ;
-        let _ = self.try_parse_current(LexTokenType::RParen)?;
+        let mut params = Vec::new();
 
-        None
+        if self.try_parse_current(LexTokenType::RParen).is_some() {
+            return Some(params);
+        }
+
+        loop {
+            let ty = self.try_parse_type()?;
+            let name = self.try_parse_identifier()?;
+
+            params.push(ASTFuncParam { ty, name });
+
+            if self.try_parse_current(LexTokenType::Comma).is_none() {
+                let _ = self.try_parse_current(LexTokenType::RParen)?;
+                break;
+            }
+        }
+
+        Some(params)
     }
 
     fn try_parse_brace(&mut self) -> Option<Vec<ASTNode>> {
@@ -269,13 +286,24 @@ mod tests {
     #[test]
     fn simple_type() {
         let mut parser = Parser::new("unsigned long long int");
-        let res = parser.try_parse_type();
+        let res = parser.try_parse_type().unwrap();
 
-        assert!(res.is_some());
-
-        let res = res.unwrap();
         assert_eq!(res.signed, false);
         assert_eq!(res.ty, ASTDataType::LongLong);
+
+        let mut parser = Parser::new("signed");
+        let res = parser.try_parse_type().unwrap();
+
+        assert_eq!(res.signed, true);
+        assert_eq!(res.ty, ASTDataType::Int);
+    }
+
+    #[test]
+    fn simple_func_params() {
+        let mut parser = Parser::new("(long long s, unsigned char a, unsigned c)");
+        let res = parser.try_parse_func_params().unwrap();
+
+        assert_eq!(res.len(), 3);
     }
 
 }

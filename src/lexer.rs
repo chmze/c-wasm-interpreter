@@ -20,6 +20,7 @@ pub enum LexTokenType {
 
     Assign,
 
+    Comma,
     Semi,
 
     LParen,
@@ -202,6 +203,7 @@ impl Lexer {
             ch if ch.is_numeric() => self.read_numeral(),
             '"' => self.read_string(),
             '=' => self.make_token_advance(LexTokenType::Assign),
+            ',' => self.make_token_advance(LexTokenType::Comma),
             ';' => self.make_token_advance(LexTokenType::Semi),
             '{' => self.make_token_advance(LexTokenType::LBrace),
             '}' => self.make_token_advance(LexTokenType::RBrace),
