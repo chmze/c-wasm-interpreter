@@ -1,8 +1,6 @@
-use std::vec;
-
 use crate::lexer::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTRoot {
     pub statements: Vec<ASTNode>,
 }
@@ -73,26 +71,26 @@ pub enum ASTDataType {
     Double,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTData {
     pub signed: bool,
     pub ty: ASTDataType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTVar {
     pub ty: ASTData,
     pub name: ASTIdentifier,
     pub initializer: Option<ASTExpression>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTFuncParam {
     pub ty: ASTData,
     pub name: ASTIdentifier,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTFunc {
     pub ty: ASTData,
     pub name: ASTIdentifier,
@@ -100,7 +98,7 @@ pub struct ASTFunc {
     pub body: Vec<ASTNode>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTNodeType {
     Root(ASTRoot),
     Var(ASTVar),
@@ -108,7 +106,7 @@ pub enum ASTNodeType {
     EOF,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTNode {
     pub ty: ASTNodeType,
 }
@@ -129,10 +127,6 @@ impl Parser {
     pub fn new(s: &str) -> Self {
         let mut lexer = Lexer::new(s);
         Self { tokens: lexer.read(), pos: 0, checkpoint: 0 }
-    }
-
-    pub fn new_lexed(tokens: Vec<LexToken>) -> Self {
-        Self { tokens, pos: 0, checkpoint: 0 }
     }
 
     fn set_pos(&mut self, pos: usize) {
@@ -168,7 +162,7 @@ impl Parser {
         self.token_at(self.pos + 1)
     }
 
-    fn try_parse_current(&mut self, ty: LexTokenType) -> Option<&LexToken> {
+    fn try_predict_current(&mut self, ty: LexTokenType) -> Option<&LexToken> {
         if self.current().ty == ty {
             self.read();
             Some(self.token_at(self.pos-1))
@@ -255,7 +249,7 @@ impl Parser {
         self.read();
         let rhs = self.parse_expression(min_bp)?;
 
-        self.try_parse_current(LexTokenType::RSquare)?;
+        self.try_predict_current(LexTokenType::RSquare)?;
 
         Some(ASTExpression::Binary(ASTBinary { ty: ASTBinaryType::Indexing, left: Box::new(lhs), right: Box::new(rhs) }))
     }
@@ -264,7 +258,7 @@ impl Parser {
         self.read();
 
         let then = self.parse_expression(min_bp)?;
-        self.try_parse_current(LexTokenType::Colon)?;
+        self.try_predict_current(LexTokenType::Colon)?;
 
         let or = self.parse_expression(min_bp)?;
 
@@ -309,10 +303,10 @@ impl Parser {
     }
 
     fn try_parse_type(&mut self) -> Option<ASTData> {
-        let explicit_signed = match self.try_parse_current(LexTokenType::Signed) {
+        let explicit_signed = match self.try_predict_current(LexTokenType::Signed) {
             Some(_) => Some(true),
             None => {
-                if self.try_parse_current(LexTokenType::Unsigned).is_some() {
+                if self.try_predict_current(LexTokenType::Unsigned).is_some() {
                     Some(false)
                 } else {
                     None
@@ -341,7 +335,7 @@ impl Parser {
         }
 
         if ty == ASTDataType::Short || ty == ASTDataType::Long || ty == ASTDataType::LongLong {
-            _ = self.try_parse_current(LexTokenType::Int); // TODO: add error handling
+            _ = self.try_predict_current(LexTokenType::Int); // TODO: add error handling
         }
 
         let signed = explicit_signed.unwrap_or(self.get_default_signedness(ty));
@@ -350,10 +344,10 @@ impl Parser {
     }
 
     fn try_parse_func_params(&mut self) -> Option<Vec<ASTFuncParam>> {
-        let _ = self.try_parse_current(LexTokenType::LParen)?;
+        let _ = self.try_predict_current(LexTokenType::LParen)?;
         let mut params = Vec::new();
 
-        if self.try_parse_current(LexTokenType::RParen).is_some() {
+        if self.try_predict_current(LexTokenType::RParen).is_some() {
             return Some(params);
         }
 
@@ -363,8 +357,8 @@ impl Parser {
 
             params.push(ASTFuncParam { ty, name });
 
-            if self.try_parse_current(LexTokenType::Comma).is_none() {
-                let _ = self.try_parse_current(LexTokenType::RParen)?;
+            if self.try_predict_current(LexTokenType::Comma).is_none() {
+                let _ = self.try_predict_current(LexTokenType::RParen)?;
                 break;
             }
         }
@@ -373,19 +367,27 @@ impl Parser {
     }
 
     fn try_parse_block(&mut self) -> Option<Vec<ASTNode>> {
-        let _ = self.try_parse_current(LexTokenType::LBrace)?;
-        // let body = ;
-        let _ = self.try_parse_current(LexTokenType::RBrace)?;
+        let _ = self.try_predict_current(LexTokenType::LBrace)?;
 
-        None
+        let mut body = Vec::new();
+
+        while self.try_predict_current(LexTokenType::RBrace).is_none() {
+            let node = self.parse_current();
+            if node.ty == ASTNodeType::EOF {
+                return None;
+            }
+
+            body.push(node);
+        }
+
+        Some(body)
     }
 
     fn try_parse_func(&mut self) -> Option<ASTNode> {
         let ty = self.try_parse_type()?;
         let name = self.try_parse_identifier()?;
         let params = self.try_parse_func_params()?;
-        //let body = self.try_parse_block()?;
-        let body = vec![];
+        let body = self.try_parse_block()?;
 
         Some(ASTNode::new(ASTNodeType::Func(ASTFunc {
             ty, name, params, body
@@ -396,13 +398,16 @@ impl Parser {
         let ty = self.try_parse_type()?;
         let name = self.try_parse_identifier()?;
 
-        if self.try_parse_current(LexTokenType::Semi).is_some() {
-            return Some(ASTNode::new(ASTNodeType::Var(ASTVar {
-                ty, name, initializer: None
-            })))
-        }
+        let initializer = match self.try_predict_current(LexTokenType::Assign) {
+            Some(_) => Some(self.parse_expression(0)?),
+            None => None,
+        };
 
-        None
+        self.try_predict_current(LexTokenType::Semi)?;
+
+        Some(ASTNode::new(ASTNodeType::Var(ASTVar { 
+            ty, name, initializer
+        })))
     }
 
     fn parse_current(&mut self) -> ASTNode {
