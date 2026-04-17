@@ -1,8 +1,65 @@
+use std::vec;
+
 use crate::lexer::*;
 
 #[derive(Debug, Clone)]
 pub struct ASTRoot {
     pub statements: Vec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTIdentifier {
+    pub literal: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ASTUnaryType {
+    Negation,
+    Plus,
+    Minus,
+    PreInc,
+    PreDec,
+    PostInc,
+    PostDec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTUnary {
+    pub ty: ASTUnaryType,
+    pub expr: Box<ASTExpression>,
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ASTBinaryType {
+    Add,
+    Sub,
+    Mult,
+    Div,
+    Indexing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTBinary {
+    pub ty: ASTBinaryType,
+    pub left: Box<ASTExpression>,
+    pub right: Box<ASTExpression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTConditional {
+    pub cond: Box<ASTExpression>,
+    pub then: Box<ASTExpression>,
+    pub or: Box<ASTExpression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ASTExpression {
+    Null,
+    Identifier(ASTIdentifier),
+    Unary(ASTUnary),
+    Binary(ASTBinary),
+    Conditional(ASTConditional),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -22,15 +79,11 @@ pub struct ASTData {
     pub ty: ASTDataType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ASTIdentifier {
-    pub literal: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct ASTVar {
     pub ty: ASTData,
     pub name: ASTIdentifier,
+    pub initializer: Option<ASTExpression>,
 }
 
 #[derive(Debug, Clone)]
@@ -146,7 +199,112 @@ impl Parser {
         }
     }
 
-    fn get_default_signedness(&self, ty: ASTDataType) -> bool {
+    fn prefix_binding_power(&self, ty: ASTUnaryType) -> u8 {
+        match ty {
+            ASTUnaryType::Plus | ASTUnaryType::Minus | ASTUnaryType::Negation
+            | ASTUnaryType::PreDec | ASTUnaryType::PreInc => 12,
+            _ => 0,
+        }
+    }
+
+    fn parse_unary(&mut self, ty: ASTUnaryType) -> Option<ASTExpression> {
+        self.read();
+        let expr = self.parse_expression(self.prefix_binding_power(ty))?;
+
+        Some(ASTExpression::Unary(ASTUnary { ty, expr: Box::new(expr) }))
+    }
+
+    fn parse_prefix(&mut self) -> Option<ASTExpression> {
+        let current = self.current();
+        let res = match current.ty {
+            LexTokenType::Identifier | LexTokenType::Numeral => Some(ASTExpression::Identifier(ASTIdentifier { literal: current.literal.clone() })),
+            LexTokenType::Negation => self.parse_unary(ASTUnaryType::Negation),
+            LexTokenType::Plus => self.parse_unary(ASTUnaryType::Plus),
+            LexTokenType::Minus => self.parse_unary(ASTUnaryType::Minus),
+            LexTokenType::PlusPlus => self.parse_unary(ASTUnaryType::PreInc),
+            LexTokenType::MinusMinus => self.parse_unary(ASTUnaryType::PreDec),
+            _ => None,
+        };
+
+        if res.is_some() {
+            self.read();
+        }
+
+        res
+    }
+
+    fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
+        match ty {
+            LexTokenType::Plus | LexTokenType::Minus => (5, 6),
+            LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
+            LexTokenType::Assign => (2, 1),
+            LexTokenType::LSquare => (13, 13),
+            LexTokenType::Question => (4, 3),
+            _ => (0, 0),
+        }
+    }
+
+    fn parse_binary_expression(&mut self, lhs: ASTExpression, min_bp: u8, ty: ASTBinaryType) -> Option<ASTExpression> {
+        self.read();
+        let rhs = self.parse_expression(min_bp)?;
+
+        Some(ASTExpression::Binary(ASTBinary { ty, left: Box::new(lhs), right: Box::new(rhs) }))
+    }
+
+    fn parse_indexing_expression(&mut self, lhs: ASTExpression, min_bp: u8) -> Option<ASTExpression> {
+        self.read();
+        let rhs = self.parse_expression(min_bp)?;
+
+        self.try_parse_current(LexTokenType::RSquare)?;
+
+        Some(ASTExpression::Binary(ASTBinary { ty: ASTBinaryType::Indexing, left: Box::new(lhs), right: Box::new(rhs) }))
+    }
+
+    fn parse_conditional_expression(&mut self, lhs: ASTExpression, min_bp: u8) -> Option<ASTExpression> {
+        self.read();
+
+        let then = self.parse_expression(min_bp)?;
+        self.try_parse_current(LexTokenType::Colon)?;
+
+        let or = self.parse_expression(min_bp)?;
+
+        Some(ASTExpression::Conditional(ASTConditional { cond: Box::new(lhs), then: Box::new(then), or: Box::new(or) }))
+    }
+
+    fn parse_infix_expression(&mut self, lhs: ASTExpression, min_bp: u8, ty: LexTokenType) -> Option<ASTExpression> {
+        match ty {
+            LexTokenType::Plus => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Add),
+            LexTokenType::Minus => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Sub),
+            LexTokenType::Asterisk => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Mult),
+            LexTokenType::Div => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Div),
+            LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
+            LexTokenType::Question => self.parse_conditional_expression(lhs, min_bp),
+            _ => Some(ASTExpression::Null),
+        }
+    }
+
+    fn parse_expression(&mut self, min_bp: u8) -> Option<ASTExpression> {
+        let mut lhs = self.parse_prefix()?;
+
+        loop {
+            let current = self.current();
+            let (lbp, rbp) = self.infix_binding_power(current.ty);
+            if lbp < min_bp {
+                break;
+            }
+
+            let temp = self.parse_infix_expression(lhs.clone(), rbp, current.ty)?;
+            if temp == ASTExpression::Null {
+                break;
+            }
+
+            lhs = temp;
+        }
+
+        Some(lhs)
+    }
+
+    fn get_default_signedness(&self, _: ASTDataType) -> bool {
         true
     }
 
@@ -214,7 +372,7 @@ impl Parser {
         Some(params)
     }
 
-    fn try_parse_brace(&mut self) -> Option<Vec<ASTNode>> {
+    fn try_parse_block(&mut self) -> Option<Vec<ASTNode>> {
         let _ = self.try_parse_current(LexTokenType::LBrace)?;
         // let body = ;
         let _ = self.try_parse_current(LexTokenType::RBrace)?;
@@ -226,7 +384,8 @@ impl Parser {
         let ty = self.try_parse_type()?;
         let name = self.try_parse_identifier()?;
         let params = self.try_parse_func_params()?;
-        let body = self.try_parse_brace()?;
+        //let body = self.try_parse_block()?;
+        let body = vec![];
 
         Some(ASTNode::new(ASTNodeType::Func(ASTFunc {
             ty, name, params, body
@@ -234,6 +393,15 @@ impl Parser {
     }
 
     fn try_parse_var(&mut self) -> Option<ASTNode> {
+        let ty = self.try_parse_type()?;
+        let name = self.try_parse_identifier()?;
+
+        if self.try_parse_current(LexTokenType::Semi).is_some() {
+            return Some(ASTNode::new(ASTNodeType::Var(ASTVar {
+                ty, name, initializer: None
+            })))
+        }
+
         None
     }
 
@@ -277,7 +445,7 @@ mod tests {
         let root = parser.parse();
 
         if let ASTNodeType::Root(root) = root.ty {
-            matches!(root.statements[0].ty, ASTNodeType::Func(_));
+            assert!(matches!(root.statements[0].ty, ASTNodeType::Func(_)));
         } else {
             panic!("Not root!");
         }
@@ -304,6 +472,61 @@ mod tests {
         let res = parser.try_parse_func_params().unwrap();
 
         assert_eq!(res.len(), 3);
+    }
+
+    #[test]
+    fn simple_expr_addmult() {
+        let mut parser = Parser::new("x + y * c");
+        let res = parser.parse_expression(0).unwrap();
+
+        if let ASTExpression::Binary(binary) = res {
+            assert_eq!(binary.ty, ASTBinaryType::Add);
+        } else {
+            panic!("Not a binary expression");
+        }
+
+        let mut parser = Parser::new("x * y + c");
+        let res = parser.parse_expression(0).unwrap();
+
+        if let ASTExpression::Binary(binary) = res {
+            assert_eq!(binary.ty, ASTBinaryType::Add);
+        } else {
+            panic!("Not a binary expression");
+        }
+    }
+
+    #[test]
+    fn simple_test_prepostfix() {
+        let mut parser = Parser::new("-2[x]");
+        let res = parser.parse_expression(0).unwrap();
+
+        if let ASTExpression::Unary(unary) = res {
+            assert_eq!(unary.ty, ASTUnaryType::Minus);
+
+            if let ASTExpression::Binary(inner) = *unary.expr {
+                assert_eq!(inner.ty, ASTBinaryType::Indexing);
+            } else {
+                panic!("Not an inner unary expression");
+            }
+        } else {
+            panic!("Not a unary expression");
+        }
+    }
+
+    #[test]
+    fn simple_test_conditional() {
+        let mut parser = Parser::new("c * a ? o + 1 ? 2 : 1 : 3");
+        let res = parser.parse_expression(0).unwrap();
+
+        if let ASTExpression::Conditional(cond) = res {
+            if let ASTExpression::Conditional(inner) = *cond.then {
+                assert!(matches!(*inner.cond, ASTExpression::Binary(_)));
+            } else {
+                panic!("Not an inner conditional expression");
+            }
+        } else {
+            panic!("Not a conditional expression");
+        }
     }
 
 }

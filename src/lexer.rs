@@ -3,7 +3,7 @@ pub struct StringTokenProps {
     pub value: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LexTokenType {
     Unsigned,
     Signed,
@@ -18,13 +18,24 @@ pub enum LexTokenType {
     Numeral,
     String,
 
+    Negation,
     Assign,
-
     Comma,
     Semi,
 
+    Plus,
+    PlusPlus,
+    Minus,
+    MinusMinus,
+    Asterisk,
+    Div,
+    Question,
+    Colon,
+
     LParen,
     RParen,
+    LSquare,
+    RSquare,
     LBrace,
     RBrace,
 
@@ -83,6 +94,29 @@ impl Lexer {
         }
     }
 
+    fn current_ch(&self) -> char {
+        self.char_at(self.pos)
+    }
+
+    fn peek_ch(&self) -> char {
+        self.char_at(self.pos + 1)
+    }
+
+    fn read_ch(&mut self) -> char {
+        if self.pos >= self.str.len() {
+            return '\0';
+        }
+
+        self.pos += 1;
+        let ch = self.current_ch();
+
+        ch
+    }
+
+    fn read_ch_offset(&mut self, offset: usize) {
+        self.pos += offset;
+    }
+
     fn get_literal(&self, start: usize, end: usize) -> &str {
         &self.str[start..end]
     }
@@ -102,23 +136,19 @@ impl Lexer {
         LexToken::new_with_props(ty, start, end, self.get_literal(start, end), props)
     }
 
-    fn current_ch(&self) -> char {
-        if self.pos >= self.str.len() {
-            return '\0';
-        }
+    fn make_doubled_advance(&mut self, ty: LexTokenType) -> LexToken {
+        let token = self.make_token_pos(ty, self.pos, self.pos + 2, LexTokenProps::None);
+        self.read_ch_offset(2);
 
-        let ch = self.str.chars().nth(self.pos).unwrap();
-
-        ch
+        token
     }
 
-    fn read_ch(&mut self) -> char {
-        if self.pos >= self.str.len() {
+    fn char_at(&self, pos: usize) -> char {
+        if pos >= self.str.len() {
             return '\0';
         }
 
-        self.pos += 1;
-        let ch = self.current_ch();
+        let ch = self.str.chars().nth(pos).unwrap();
 
         ch
     }
@@ -188,6 +218,24 @@ impl Lexer {
         self.make_token_pos(LexTokenType::String, start, end, LexTokenProps::String(StringTokenProps { value: val.into() }))
     }
 
+    fn read_plus(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '+' => self.make_doubled_advance(LexTokenType::PlusPlus),
+            _ => self.make_token_advance(LexTokenType::Plus),
+        }
+    }
+
+    fn read_minus(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '-' => self.make_doubled_advance(LexTokenType::MinusMinus),
+            _ => self.make_token_advance(LexTokenType::Minus),
+        }
+    }
+
     fn skip_whitespace(&mut self) {
         while self.current_ch().is_whitespace() {
             self.read_ch();
@@ -202,13 +250,22 @@ impl Lexer {
             ch if ch.is_alphabetic() => self.read_word(),
             ch if ch.is_numeric() => self.read_numeral(),
             '"' => self.read_string(),
+            '!' => self.make_token_advance(LexTokenType::Negation),
             '=' => self.make_token_advance(LexTokenType::Assign),
             ',' => self.make_token_advance(LexTokenType::Comma),
             ';' => self.make_token_advance(LexTokenType::Semi),
-            '{' => self.make_token_advance(LexTokenType::LBrace),
-            '}' => self.make_token_advance(LexTokenType::RBrace),
+            '+' => self.read_plus(),
+            '-' => self.read_minus(),
+            '*' => self.make_token_advance(LexTokenType::Asterisk),
+            '/' => self.make_token_advance(LexTokenType::Div),
+            '?' => self.make_token_advance(LexTokenType::Question),
+            ':' => self.make_token_advance(LexTokenType::Colon),
             '(' => self.make_token_advance(LexTokenType::LParen),
             ')' => self.make_token_advance(LexTokenType::RParen),
+            '[' => self.make_token_advance(LexTokenType::LSquare),
+            ']' => self.make_token_advance(LexTokenType::RSquare),
+            '{' => self.make_token_advance(LexTokenType::LBrace),
+            '}' => self.make_token_advance(LexTokenType::RBrace),
             '\0' => self.make_token_advance(LexTokenType::EOF),
             _ => self.make_token_advance(LexTokenType::Unknown),
         }
@@ -284,6 +341,18 @@ mod tests {
         assert_eq!(res[1].ty, LexTokenType::Long);
         assert_eq!(res[2].ty, LexTokenType::Long);
         assert_eq!(res[3].ty, LexTokenType::Int);
+    }
+
+    #[test]
+    fn simple_incr_decr() {
+        let mut lexer = Lexer::new("+++----");
+        let res = lexer.read();
+
+        //assert_eq!(res.len(), 5);
+        assert_eq!(res[0].ty, LexTokenType::PlusPlus);
+        assert_eq!(res[1].ty, LexTokenType::Plus);
+        assert_eq!(res[2].ty, LexTokenType::MinusMinus);
+        assert_eq!(res[3].ty, LexTokenType::MinusMinus);
     }
 
 }
