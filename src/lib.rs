@@ -1,6 +1,6 @@
-mod lexer;
-mod parser;
-mod interpreter;
+pub mod lexer;
+pub mod parser;
+pub mod interpreter;
 
 mod utils;
 
@@ -20,5 +20,5 @@ pub fn wasm_init() {
     let mut lexer = Lexer::new("int main() { print(); }");
     lexer.read();
 
-    let _ = Interpreter::new();
+    let _ = Interpreter::new("int a = 1;");
 }
