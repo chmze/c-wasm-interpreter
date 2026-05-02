@@ -157,7 +157,7 @@ macro_rules! apply_binary_op {
             (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I64(l $op r),
             (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::F32(l $op r),
             (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::F64(l $op r),
-            _ => todo!("type promotion needed"),
+            _ => unreachable!(),
         }
     }
 }
@@ -212,10 +212,55 @@ impl Interpreter {
         }
     }
 
+    fn rank(&self, value: &StorableValue) -> u8 {
+        match value {
+            StorableValue::I8(_) => 1,
+            StorableValue::I16(_) => 2,
+            StorableValue::I32(_) => 3,
+            StorableValue::I64(_) => 4,
+            StorableValue::F32(_) => 5,
+            StorableValue::F64(_) => 6,
+        }
+    }
+
+    fn convert_to_rank(&self, value: StorableValue, rank: u8) -> StorableValue {
+        match (value, rank) {
+            (StorableValue::I8(v), 2) => StorableValue::I16(v as i16),
+            (StorableValue::I8(v), 3) => StorableValue::I32(v as i32),
+            (StorableValue::I8(v), 4) => StorableValue::I64(v as i64),
+            (StorableValue::I8(v), 5) => StorableValue::F32(v as f32),
+            (StorableValue::I8(v), 6) => StorableValue::F64(v as f64),
+            (StorableValue::I16(v), 3) => StorableValue::I32(v as i32),
+            (StorableValue::I16(v), 4) => StorableValue::I64(v as i64),
+            (StorableValue::I16(v), 5) => StorableValue::F32(v as f32),
+            (StorableValue::I16(v), 6) => StorableValue::F64(v as f64),
+            (StorableValue::I32(v), 4) => StorableValue::I64(v as i64),
+            (StorableValue::I32(v), 5) => StorableValue::F32(v as f32),
+            (StorableValue::I32(v), 6) => StorableValue::F64(v as f64),
+            (StorableValue::I64(v), 5) => StorableValue::F32(v as f32),
+            (StorableValue::I64(v), 6) => StorableValue::F64(v as f64),
+            (StorableValue::F32(v), 6) => StorableValue::F64(v as f64),
+            _ => unreachable!(),
+        }
+    }
+
+    fn convert(&self, left: StorableValue, right: StorableValue) -> (StorableValue, StorableValue) {
+        let (lrank, rrank) = (self.rank(&left), self.rank(&right));
+
+        if lrank == rrank {
+            (left, right)
+        } else if lrank < rrank {
+            (self.convert_to_rank(left, rrank), right)
+        } else {
+            (left, self.convert_to_rank(right, lrank))
+        }
+    }
 
     fn exec_binary(&self, binary: ASTBinary) -> StorableValue {
         let left = self.exec_expr(*binary.left);
         let right = self.exec_expr(*binary.right);
+
+        let (left, right) = self.convert(left, right);
 
         match binary.ty {
             ASTBinaryType::Add => apply_binary_op!(left, right, +),
@@ -288,6 +333,14 @@ mod tests {
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
         panic!("Log test 2");
+    }
+
+    #[test]
+    fn simple_conversions() {
+        let mut i = Interpreter::new("short int a = 3; long int b = a + 4; int c = a + b * 2; int d = 2;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!("Log test 3");
     }
 
 }
