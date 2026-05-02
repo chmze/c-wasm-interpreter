@@ -48,28 +48,39 @@ struct CallStack {
 
 struct Memory {
     data: [u8; 65536],
-    allocations: HashMap<u16, (u16, ASTDataType)>,
+    // allocations: HashMap<u16, (u16, ASTDataType)>,
 }
 
 impl Memory {
     pub fn new() -> Self {
-        Self { data: [0; 65536], allocations: HashMap::new() }
+        Self { data: [0; 65536] }
     }
 
-    fn write_bytes<const N: usize>(&mut self, addr: u16, bytes: [u8; N]) {
+    fn write_bytes<const N: usize>(&mut self, addr: u16, bytes: [u8; N], limit: Option<usize>) {
         let addr = addr as usize;
-        self.data[addr..addr+N].copy_from_slice(&bytes);
+        let n = N.min(limit.unwrap_or(usize::MAX));
+        self.data[addr..addr+n].copy_from_slice(&bytes[0..n]);
+    }
+
+    fn write_full(&mut self, addr: u16, value: &StorableValue, limit: Option<u16>) {
+        let limit = limit.map(|l| l as usize);
+
+        match value {
+            StorableValue::I8(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::I16(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::I32(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::I64(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::F32(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::F64(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+        }
     }
 
     pub fn write(&mut self, addr: u16, value: &StorableValue) {
-        match value {
-            StorableValue::I8(value) => self.write_bytes(addr, value.to_le_bytes()),
-            StorableValue::I16(value) => self.write_bytes(addr, value.to_le_bytes()),
-            StorableValue::I32(value) => self.write_bytes(addr, value.to_le_bytes()),
-            StorableValue::I64(value) => self.write_bytes(addr, value.to_le_bytes()),
-            StorableValue::F32(value) => self.write_bytes(addr, value.to_le_bytes()),
-            StorableValue::F64(value) => self.write_bytes(addr, value.to_le_bytes()),
-        }
+        self.write_full(addr, value, None);
+    }
+
+    pub fn write_truncated(&mut self, addr: u16, value: &StorableValue, size: u16) {
+        self.write_full(addr, value, Some(size));
     }
 
     fn get_bytes<const N: usize>(&self, addr: u16) -> [u8; N] {
@@ -113,27 +124,27 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Environment { decls: HashMap::new(), ptr: 0 }
     }
 
-    pub fn ptr(&self) -> u16 {
+    fn ptr(&self) -> u16 {
         self.ptr
     }
 
-    pub fn add_var(&mut self, name: String, var: EnvVar, size: u16) {
+    fn add_var(&mut self, name: String, var: EnvVar, size: u16) {
         self.decls.entry(name).insert_entry(EnvDecl::Var(var));
         self.ptr += size;
     }
 
-    pub fn get_var(&self, name: &str) -> Option<&EnvVar> {
+    fn get_var(&self, name: &str) -> Option<&EnvVar> {
         self.decls.get(name).and_then(|decl| match decl {
             EnvDecl::Var(var) => Some(var),
             _ => None,
         })
     }
 
-    pub fn add_func(&mut self, name: String, func: EnvFunc) {
+    fn add_func(&mut self, name: String, func: EnvFunc) {
         self.decls.entry(name).insert_entry(EnvDecl::Func(func));
     }
 }
@@ -296,8 +307,9 @@ impl Interpreter {
         let addr = self.env.ptr();
         let val = var.initializer.map(|expr| self.exec_expr(expr));
 
-        self.env.add_var(name, EnvVar::new(addr, ty.clone()), self.memory.get_size(&ty.ty));
-        val.map(|val| self.memory.write(addr, &val));
+        let size = self.memory.get_size(&ty.ty);
+        self.env.add_var(name, EnvVar::new(addr, ty.clone()), size);
+        val.map(|val| self.memory.write_truncated(addr, &val, size));
     }
 
     fn exec_node(&mut self, node: ASTNode) {
@@ -324,7 +336,8 @@ mod tests {
         let mut i = Interpreter::new("int a = 1;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!("Log test 1");
+        assert_eq!(exec.memory[0], 1);
+        assert_eq!(exec.memory[1], 0);
     }
 
     #[test]
@@ -332,15 +345,36 @@ mod tests {
         let mut i = Interpreter::new("int a = 1; int b = a + 1; int c = a + b * 2;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!("Log test 2");
+        assert_eq!(exec.memory[0], 1);
+        assert_eq!(exec.memory[1], 0);
+        assert_eq!(exec.memory[4], 2);
+        assert_eq!(exec.memory[5], 0);
+        assert_eq!(exec.memory[8], 5);
+        assert_eq!(exec.memory[9], 0);
     }
 
     #[test]
     fn simple_conversions() {
-        let mut i = Interpreter::new("short int a = 3; long int b = a + 4; int c = a + b * 2; int d = 2;");
+        let mut i = Interpreter::new("short int a = 3; long int b = a + 4; int c = a + b * 4 / 2; int d = b;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!("Log test 3");
+        assert_eq!(exec.memory[0], 3);
+        assert_eq!(exec.memory[1], 0);
+        assert_eq!(exec.memory[2], 7);
+        assert_eq!(exec.memory[3], 0);
+        assert_eq!(exec.memory[10], 17);
+        assert_eq!(exec.memory[11], 0);
+        assert_eq!(exec.memory[14], 7);
+        assert_eq!(exec.memory[15], 0);
+    }
+
+    #[test]
+    fn conversion_test() {
+        let mut i = Interpreter::new("short int a = 752235;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        assert_eq!(exec.memory[2], 0);
+        assert_eq!(exec.memory[3], 0);
     }
 
 }
