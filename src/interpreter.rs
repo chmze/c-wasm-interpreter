@@ -1,18 +1,28 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::TryInto};
 
-use crate::parser::{ASTData, ASTDataType, ASTFunc, ASTNode, ASTNodeType, ASTRoot, ASTVar, Parser};
+use crate::parser::{ASTBinary, ASTBinaryType, ASTData, ASTDataType, ASTExpression, ASTFunc, ASTIdentifier, ASTNode, ASTNodeType, ASTNumeral, ASTRoot, ASTVar, Parser};
 
-pub struct EnvVar {
-    address: usize,
+pub enum StorableValue {
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+}
+
+struct EnvVar {
+    address: u16,
+    ty: ASTData,
 }
 
 impl EnvVar {
-    pub fn new(address: usize) -> Self {
-        Self { address }
+    pub fn new(address: u16, ty: ASTData) -> Self {
+        Self { address, ty }
     }
 }
 
-pub struct EnvFunc {
+struct EnvFunc {
 
 }
 
@@ -22,7 +32,21 @@ impl EnvFunc {
     }
 }
 
-pub struct Memory {
+enum EnvDecl {
+    Var(EnvVar),
+    Func(EnvFunc),
+}
+
+struct StackFrame {
+    base: u16,
+    return_addr: u16,
+}
+
+struct CallStack {
+    frames: Vec<StackFrame>,
+}
+
+struct Memory {
     data: [u8; 65536],
     allocations: HashMap<u16, (u16, ASTDataType)>,
 }
@@ -32,32 +56,110 @@ impl Memory {
         Self { data: [0; 65536], allocations: HashMap::new() }
     }
 
-    pub fn write(&mut self, addr: u16, ty: ASTData) {
-
+    fn write_bytes<const N: usize>(&mut self, addr: u16, bytes: [u8; N]) {
+        let addr = addr as usize;
+        self.data[addr..addr+N].copy_from_slice(&bytes);
     }
 
-    pub fn read(&self, addr: u16) {
+    pub fn write(&mut self, addr: u16, value: &StorableValue) {
+        match value {
+            StorableValue::I8(value) => self.write_bytes(addr, value.to_le_bytes()),
+            StorableValue::I16(value) => self.write_bytes(addr, value.to_le_bytes()),
+            StorableValue::I32(value) => self.write_bytes(addr, value.to_le_bytes()),
+            StorableValue::I64(value) => self.write_bytes(addr, value.to_le_bytes()),
+            StorableValue::F32(value) => self.write_bytes(addr, value.to_le_bytes()),
+            StorableValue::F64(value) => self.write_bytes(addr, value.to_le_bytes()),
+        }
+    }
 
+    fn get_bytes<const N: usize>(&self, addr: u16) -> [u8; N] {
+        let addr = addr as usize;
+        self.data[addr..addr+N].try_into().unwrap()
+    }
+
+    pub fn read(&self, addr: u16, ty: &ASTDataType) -> StorableValue {
+        match ty {
+            ASTDataType::Char => StorableValue::I8(i8::from_le_bytes(self.get_bytes(addr))),
+            ASTDataType::Short => StorableValue::I16(i16::from_le_bytes(self.get_bytes(addr))),
+            ASTDataType::Int => StorableValue::I32(i32::from_le_bytes(self.get_bytes(addr))),
+            ASTDataType::Long | ASTDataType::LongLong => StorableValue::I64(i64::from_le_bytes(self.get_bytes(addr))),
+            ASTDataType::Float => StorableValue::F32(f32::from_le_bytes(self.get_bytes(addr))),
+            ASTDataType::Double => StorableValue::F64(f64::from_le_bytes(self.get_bytes(addr))),
+            _ => StorableValue::I8(0), // TODO: implement others later
+        }
+    }
+
+    fn extract_size<const N: usize>(&self, bytes: [u8; N]) -> u16 {
+        N as u16
+    }
+
+    pub fn get_size(&self, ty: &ASTDataType) -> u16 {
+        let value = self.read(0, ty);
+
+        match value {
+            StorableValue::I8(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::I16(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::I32(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::I64(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::F32(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::F64(value) => self.extract_size(value.to_le_bytes()),
+        }
     }
 }
 
 pub struct Environment {
-    memory: Memory,
-    vars: HashMap<String, EnvVar>,
-    funcs: HashMap<String, EnvFunc>,
+    decls: HashMap<String, EnvDecl>,
+    ptr: u16,
 }
 
 impl Environment {
     pub fn new() -> Self {
-        Environment { memory: Memory::new(), vars: HashMap::new(), funcs: HashMap::new() }
+        Environment { decls: HashMap::new(), ptr: 0 }
+    }
+
+    pub fn ptr(&self) -> u16 {
+        self.ptr
+    }
+
+    pub fn add_var(&mut self, name: String, var: EnvVar, size: u16) {
+        self.decls.entry(name).insert_entry(EnvDecl::Var(var));
+        self.ptr += size;
+    }
+
+    pub fn get_var(&self, name: &str) -> Option<&EnvVar> {
+        self.decls.get(name).and_then(|decl| match decl {
+            EnvDecl::Var(var) => Some(var),
+            _ => None,
+        })
+    }
+
+    pub fn add_func(&mut self, name: String, func: EnvFunc) {
+        self.decls.entry(name).insert_entry(EnvDecl::Func(func));
     }
 }
 
-pub struct Exec {} // execution result, fill in later
+pub struct Exec {
+    pub memory: [u8; 65536],
+}
 
 pub struct Interpreter {
     root: ASTNode,
+    memory: Memory,
     env: Environment,
+}
+
+macro_rules! apply_binary_op {
+    ($left:expr, $right:expr, $op:tt) => {
+        match ($left, $right) {
+            (StorableValue::I8(l), StorableValue::I8(r)) => StorableValue::I8(l $op r),
+            (StorableValue::I16(l), StorableValue::I16(r)) => StorableValue::I16(l $op r),
+            (StorableValue::I32(l), StorableValue::I32(r)) => StorableValue::I32(l $op r),
+            (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I64(l $op r),
+            (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::F32(l $op r),
+            (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::F64(l $op r),
+            _ => todo!("type promotion needed"),
+        }
+    }
 }
 
 impl Interpreter {
@@ -65,25 +167,95 @@ impl Interpreter {
         let mut parser = Parser::new(s);
         let root = parser.parse();
 
-        Self { root, env: Environment::new() }
+        Self { root, memory: Memory::new(), env: Environment::new() }
     }
 
     pub fn new_with_node(root: ASTNode) -> Self {
-        Self { root, env: Environment::new() }
+        Self { root, memory: Memory::new(), env: Environment::new() }
+    }
+
+    fn get_digit(&self, c: char) -> u64 {
+        match c {
+            '0'..='9' => (c as u8 - b'0') as u64,
+            _ => unreachable!(),
+        }
+    }
+
+    fn exec_identifier(&self, identifier: ASTIdentifier) -> StorableValue {
+        let var = self.env.get_var(&identifier.literal).unwrap();
+        self.memory.read(var.address, &var.ty.ty)
+    }
+
+    fn exec_numeral(&self, numeral: ASTNumeral) -> StorableValue {
+        let literal = numeral.literal;
+        let mut acc: u64 = 0;
+
+        for c in literal.chars() {
+            let d = self.get_digit(c);
+            if acc > u64::MAX / 10 {
+                panic!("Literal too large");
+            }
+            acc *= 10;
+
+            if acc > u64::MAX - d {
+                panic!("Literal too large");
+            }
+            acc += d;
+        }
+
+        if acc <= i32::MAX as u64 {
+            StorableValue::I32(acc as i32)
+        } else if acc <= i64::MAX as u64 {
+            StorableValue::I64(acc as i64)
+        } else {
+            StorableValue::I8(0) // temp
+        }
+    }
+
+
+    fn exec_binary(&self, binary: ASTBinary) -> StorableValue {
+        let left = self.exec_expr(*binary.left);
+        let right = self.exec_expr(*binary.right);
+
+        match binary.ty {
+            ASTBinaryType::Add => apply_binary_op!(left, right, +),
+            ASTBinaryType::Sub => apply_binary_op!(left, right, -),
+            ASTBinaryType::Mult => apply_binary_op!(left, right, *),
+            ASTBinaryType::Div => apply_binary_op!(left, right, /),
+            _ => todo!(),
+        }
+    }
+
+    fn exec_expr(&self, expr: ASTExpression) -> StorableValue {
+        match expr {
+            ASTExpression::Identifier(id) => self.exec_identifier(id),
+            ASTExpression::Numeral(numeral) => self.exec_numeral(numeral),
+            ASTExpression::Binary(binary) => self.exec_binary(binary),
+            _ => todo!(),
+        }
     }
 
     fn exec_root(&mut self, root: ASTRoot) {
-
+        for node in root.statements {
+            self.exec_node(node);
+        }
     }
 
     fn exec_func(&mut self, func: ASTFunc) {
-        // TODO for now
+        todo!()
     }
 
     fn exec_var(&mut self, var: ASTVar) {
+        let name = var.name.literal;
+        let ty = var.ty;
+        let addr = self.env.ptr();
+        let val = var.initializer.map(|expr| self.exec_expr(expr));
+
+        self.env.add_var(name, EnvVar::new(addr, ty.clone()), self.memory.get_size(&ty.ty));
+        val.map(|val| self.memory.write(addr, &val));
     }
 
-    fn node_eval(&mut self, node: ASTNode) {
+    fn exec_node(&mut self, node: ASTNode) {
         match node.ty {
             ASTNodeType::Root(root) => self.exec_root(root),
             ASTNodeType::Func(func) => self.exec_func(func),
@@ -93,9 +265,8 @@ impl Interpreter {
     }
 
     pub fn execute(&mut self) -> Option<Exec> {
-
-        self.node_eval(self.root.clone());
-        None
+        self.exec_node(self.root.clone());
+        Some(Exec { memory: self.memory.data.clone() })
     }
 }
 
@@ -104,9 +275,19 @@ mod tests {
     use crate::interpreter::*;
 
     #[test]
-    pub fn test() {
+    fn simple_assignment() {
+        let mut i = Interpreter::new("int a = 1;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!("Log test 1");
+    }
+
+    #[test]
+    fn simple_expressions() {
         let mut i = Interpreter::new("int a = 1; int b = a + 1; int c = a + b * 2;");
-        assert!(i.execute().is_some());
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!("Log test 2");
     }
 
 }

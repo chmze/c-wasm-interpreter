@@ -10,6 +10,11 @@ pub struct ASTIdentifier {
     pub literal: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTNumeral {
+    pub literal: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTUnaryType {
     Negation,
@@ -55,6 +60,7 @@ pub struct ASTConditional {
 pub enum ASTExpression {
     Null,
     Identifier(ASTIdentifier),
+    Numeral(ASTNumeral),
     Unary(ASTUnary),
     Binary(ASTBinary),
     Conditional(ASTConditional),
@@ -211,7 +217,8 @@ impl Parser {
     fn parse_prefix(&mut self) -> Option<ASTExpression> {
         let current = self.current();
         let res = match current.ty {
-            LexTokenType::Identifier | LexTokenType::Numeral => Some(ASTExpression::Identifier(ASTIdentifier { literal: current.literal.clone() })),
+            LexTokenType::Identifier => Some(ASTExpression::Identifier(ASTIdentifier { literal: current.literal.clone() })),
+            LexTokenType::Numeral => Some(ASTExpression::Numeral(ASTNumeral { literal: current.literal.clone() })),
             LexTokenType::Negation => self.parse_unary(ASTUnaryType::Negation),
             LexTokenType::Plus => self.parse_unary(ASTUnaryType::Plus),
             LexTokenType::Minus => self.parse_unary(ASTUnaryType::Minus),
@@ -430,8 +437,10 @@ impl Parser {
     pub fn parse(&mut self) -> ASTNode {
         let mut root = ASTRoot { statements: Vec::new() };
 
-        let cur = self.parse_current();
-        root.statements.push(cur);
+        while self.current().ty != LexTokenType::EOF {
+            let cur = self.parse_current();
+            root.statements.push(cur);
+        }
 
         let root = ASTNode::new(ASTNodeType::Root(root));
         root
