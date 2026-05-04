@@ -1,8 +1,12 @@
 use std::{collections::HashMap, convert::TryInto};
 
-use crate::parser::{ASTBinary, ASTBinaryType, ASTData, ASTDataType, ASTExpression, ASTFunc, ASTIdentifier, ASTNode, ASTNodeType, ASTNumeral, ASTRoot, ASTVar, Parser};
+use crate::parser::*;
 
 pub enum StorableValue {
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
     I8(i8),
     I16(i16),
     I32(i32),
@@ -17,7 +21,7 @@ struct EnvVar {
 }
 
 impl EnvVar {
-    pub fn new(address: u16, ty: ASTData) -> Self {
+    fn new(address: u16, ty: ASTData) -> Self {
         Self { address, ty }
     }
 }
@@ -27,7 +31,7 @@ struct EnvFunc {
 }
 
 impl EnvFunc {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {}
     }
 }
@@ -62,10 +66,14 @@ impl Memory {
         self.data[addr..addr+n].copy_from_slice(&bytes[0..n]);
     }
 
-    fn write_full(&mut self, addr: u16, value: &StorableValue, limit: Option<u16>) {
+    fn write(&mut self, addr: u16, value: &StorableValue, limit: Option<u16>) {
         let limit = limit.map(|l| l as usize);
 
         match value {
+            StorableValue::U8(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::U16(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::U32(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
+            StorableValue::U64(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
             StorableValue::I8(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
             StorableValue::I16(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
             StorableValue::I32(value) => self.write_bytes(addr, value.to_le_bytes(), limit),
@@ -75,12 +83,8 @@ impl Memory {
         }
     }
 
-    pub fn write(&mut self, addr: u16, value: &StorableValue) {
-        self.write_full(addr, value, None);
-    }
-
     pub fn write_truncated(&mut self, addr: u16, value: &StorableValue, size: u16) {
-        self.write_full(addr, value, Some(size));
+        self.write(addr, value, Some(size));
     }
 
     fn get_bytes<const N: usize>(&self, addr: u16) -> [u8; N] {
@@ -88,26 +92,33 @@ impl Memory {
         self.data[addr..addr+N].try_into().unwrap()
     }
 
-    pub fn read(&self, addr: u16, ty: &ASTDataType) -> StorableValue {
-        match ty {
-            ASTDataType::Char => StorableValue::I8(i8::from_le_bytes(self.get_bytes(addr))),
-            ASTDataType::Short => StorableValue::I16(i16::from_le_bytes(self.get_bytes(addr))),
-            ASTDataType::Int => StorableValue::I32(i32::from_le_bytes(self.get_bytes(addr))),
-            ASTDataType::Long | ASTDataType::LongLong => StorableValue::I64(i64::from_le_bytes(self.get_bytes(addr))),
-            ASTDataType::Float => StorableValue::F32(f32::from_le_bytes(self.get_bytes(addr))),
-            ASTDataType::Double => StorableValue::F64(f64::from_le_bytes(self.get_bytes(addr))),
-            _ => StorableValue::I8(0), // TODO: implement others later
+    pub fn read(&self, addr: u16, ty: &ASTData) -> StorableValue {
+        match (ty.ty, ty.signed) {
+            (ASTDataType::Char, false) => StorableValue::U8(u8::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Short, false) => StorableValue::U16(u16::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Int, false) => StorableValue::U32(u32::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Long | ASTDataType::LongLong, false) => StorableValue::U64(u64::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Char, true) => StorableValue::I8(i8::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Short, true) => StorableValue::I16(i16::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Int, true) => StorableValue::I32(i32::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Long | ASTDataType::LongLong, true) => StorableValue::I64(i64::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Float, _) => StorableValue::F32(f32::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Double, _) => StorableValue::F64(f64::from_le_bytes(self.get_bytes(addr))),
         }
     }
 
-    fn extract_size<const N: usize>(&self, bytes: [u8; N]) -> u16 {
+    fn extract_size<const N: usize>(&self, _: [u8; N]) -> u16 {
         N as u16
     }
 
-    pub fn get_size(&self, ty: &ASTDataType) -> u16 {
+    pub fn get_size(&self, ty: &ASTData) -> u16 {
         let value = self.read(0, ty);
 
         match value {
+            StorableValue::U8(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::U16(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::U32(value) => self.extract_size(value.to_le_bytes()),
+            StorableValue::U64(value) => self.extract_size(value.to_le_bytes()),
             StorableValue::I8(value) => self.extract_size(value.to_le_bytes()),
             StorableValue::I16(value) => self.extract_size(value.to_le_bytes()),
             StorableValue::I32(value) => self.extract_size(value.to_le_bytes()),
@@ -163,9 +174,13 @@ macro_rules! apply_binary_op {
     ($left:expr, $right:expr, $op:tt) => {
         match ($left, $right) {
             (StorableValue::I8(l), StorableValue::I8(r)) => StorableValue::I8(l $op r),
+            (StorableValue::U8(l), StorableValue::U8(r)) => StorableValue::U8(l $op r),
             (StorableValue::I16(l), StorableValue::I16(r)) => StorableValue::I16(l $op r),
+            (StorableValue::U16(l), StorableValue::U16(r)) => StorableValue::U16(l $op r),
             (StorableValue::I32(l), StorableValue::I32(r)) => StorableValue::I32(l $op r),
+            (StorableValue::U32(l), StorableValue::U32(r)) => StorableValue::U32(l $op r),
             (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I64(l $op r),
+            (StorableValue::U64(l), StorableValue::U64(r)) => StorableValue::U64(l $op r),
             (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::F32(l $op r),
             (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::F64(l $op r),
             _ => unreachable!(),
@@ -194,7 +209,7 @@ impl Interpreter {
 
     fn exec_identifier(&self, identifier: ASTIdentifier) -> StorableValue {
         let var = self.env.get_var(&identifier.literal).unwrap();
-        self.memory.read(var.address, &var.ty.ty)
+        self.memory.read(var.address, &var.ty)
     }
 
     fn exec_numeral(&self, numeral: ASTNumeral) -> StorableValue {
@@ -226,31 +241,65 @@ impl Interpreter {
     fn rank(&self, value: &StorableValue) -> u8 {
         match value {
             StorableValue::I8(_) => 1,
-            StorableValue::I16(_) => 2,
-            StorableValue::I32(_) => 3,
-            StorableValue::I64(_) => 4,
-            StorableValue::F32(_) => 5,
-            StorableValue::F64(_) => 6,
+            StorableValue::U8(_) => 2,
+            StorableValue::I16(_) => 3,
+            StorableValue::U16(_) => 4,
+            StorableValue::I32(_) => 5,
+            StorableValue::U32(_) => 6,
+            StorableValue::I64(_) => 7,
+            StorableValue::U64(_) => 8,
+            StorableValue::F32(_) => 9,
+            StorableValue::F64(_) => 10,
         }
     }
 
     fn convert_to_rank(&self, value: StorableValue, rank: u8) -> StorableValue {
         match (value, rank) {
-            (StorableValue::I8(v), 2) => StorableValue::I16(v as i16),
-            (StorableValue::I8(v), 3) => StorableValue::I32(v as i32),
-            (StorableValue::I8(v), 4) => StorableValue::I64(v as i64),
-            (StorableValue::I8(v), 5) => StorableValue::F32(v as f32),
-            (StorableValue::I8(v), 6) => StorableValue::F64(v as f64),
-            (StorableValue::I16(v), 3) => StorableValue::I32(v as i32),
-            (StorableValue::I16(v), 4) => StorableValue::I64(v as i64),
-            (StorableValue::I16(v), 5) => StorableValue::F32(v as f32),
-            (StorableValue::I16(v), 6) => StorableValue::F64(v as f64),
-            (StorableValue::I32(v), 4) => StorableValue::I64(v as i64),
-            (StorableValue::I32(v), 5) => StorableValue::F32(v as f32),
-            (StorableValue::I32(v), 6) => StorableValue::F64(v as f64),
-            (StorableValue::I64(v), 5) => StorableValue::F32(v as f32),
-            (StorableValue::I64(v), 6) => StorableValue::F64(v as f64),
-            (StorableValue::F32(v), 6) => StorableValue::F64(v as f64),
+            (StorableValue::I8(v), 2) => StorableValue::U8(v as u8),
+            (StorableValue::I8(v), 3) => StorableValue::I16(v as i16),
+            (StorableValue::I8(v), 4) => StorableValue::U16(v as u16),
+            (StorableValue::I8(v), 5) => StorableValue::I32(v as i32),
+            (StorableValue::I8(v), 6) => StorableValue::U32(v as u32),
+            (StorableValue::I8(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::I8(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::I8(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::I8(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::U8(v), 3) => StorableValue::I16(v as i16),
+            (StorableValue::U8(v), 4) => StorableValue::U16(v as u16),
+            (StorableValue::U8(v), 5) => StorableValue::I32(v as i32),
+            (StorableValue::U8(v), 6) => StorableValue::U32(v as u32),
+            (StorableValue::U8(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::U8(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::U8(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::U8(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::I16(v), 4) => StorableValue::U16(v as u16),
+            (StorableValue::I16(v), 5) => StorableValue::I32(v as i32),
+            (StorableValue::I16(v), 6) => StorableValue::U32(v as u32),
+            (StorableValue::I16(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::I16(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::I16(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::I16(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::U16(v), 5) => StorableValue::I32(v as i32),
+            (StorableValue::U16(v), 6) => StorableValue::U32(v as u32),
+            (StorableValue::U16(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::U16(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::U16(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::U16(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::I32(v), 6) => StorableValue::U32(v as u32),
+            (StorableValue::I32(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::I32(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::I32(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::I32(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::U32(v), 7) => StorableValue::I64(v as i64),
+            (StorableValue::U32(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::U32(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::U32(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::I64(v), 8) => StorableValue::U64(v as u64),
+            (StorableValue::I64(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::I64(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::U64(v), 9) => StorableValue::F32(v as f32),
+            (StorableValue::U64(v), 10) => StorableValue::F64(v as f64),
+            (StorableValue::F32(v), 10) => StorableValue::F64(v as f64),
             _ => unreachable!(),
         }
     }
@@ -307,7 +356,7 @@ impl Interpreter {
         let addr = self.env.ptr();
         let val = var.initializer.map(|expr| self.exec_expr(expr));
 
-        let size = self.memory.get_size(&ty.ty);
+        let size = self.memory.get_size(&ty);
         self.env.add_var(name, EnvVar::new(addr, ty.clone()), size);
         val.map(|val| self.memory.write_truncated(addr, &val, size));
     }
@@ -375,6 +424,14 @@ mod tests {
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[2], 0);
         assert_eq!(exec.memory[3], 0);
+    }
+
+    #[test]
+    fn simple_unsigned() {
+        let mut i = Interpreter::new("short int a = 3; unsigned long int b = a + 4; int c = a + b * 4 / 2; int d = b;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!("Log test");
     }
 
 }
