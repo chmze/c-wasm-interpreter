@@ -39,7 +39,10 @@ pub enum ASTBinaryType {
     Sub,
     Mult,
     Div,
+    LessThan,
+    BiggerThan,
     Indexing,
+    Assignment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -105,10 +108,20 @@ pub struct ASTFunc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTWhile {
+    pub cond: ASTExpression,
+    pub body: Vec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTNodeType {
     Root(ASTRoot),
+
     Var(ASTVar),
     Func(ASTFunc),
+    Expression(ASTExpression),
+
+    While(ASTWhile),
     EOF,
 }
 
@@ -236,6 +249,7 @@ impl Parser {
 
     fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
         match ty {
+            LexTokenType::LessThan | LexTokenType::BiggerThan => (3, 4),
             LexTokenType::Plus | LexTokenType::Minus => (5, 6),
             LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
             LexTokenType::Assign => (2, 1),
@@ -278,6 +292,9 @@ impl Parser {
             LexTokenType::Minus => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Sub),
             LexTokenType::Asterisk => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Mult),
             LexTokenType::Div => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Div),
+            LexTokenType::LessThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessThan),
+            LexTokenType::BiggerThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::BiggerThan),
+            LexTokenType::Assign => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Assignment),
             LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
             LexTokenType::Question => self.parse_conditional_expression(lhs, min_bp),
             _ => Some(ASTExpression::Null),
@@ -303,6 +320,13 @@ impl Parser {
         }
 
         Some(lhs)
+    }
+
+    fn try_parse_expression_statement(&mut self) -> Option<ASTNode> {
+        let expr = self.parse_expression(0)?;
+        let _ = self.try_predict_current(LexTokenType::Semi)?;
+
+        Some(ASTNode::new(ASTNodeType::Expression(expr)))
     }
 
     fn get_default_signedness(&self, _: ASTDataType) -> bool {
@@ -417,10 +441,33 @@ impl Parser {
         })))
     }
 
-    fn parse_current(&mut self) -> ASTNode {
-        if self.current().ty == LexTokenType::EOF {
-            return ASTNode::new(ASTNodeType::EOF);
+    fn try_parse_statement_block(&mut self) -> Option<Vec<ASTNode>> {
+        if self.current().ty == LexTokenType::LBrace {
+            self.try_parse_block()
+        } else {
+            Some(vec![self.parse_current()])
         }
+    }
+
+    fn try_parse_while(&mut self) -> Option<ASTNode> {
+        let _ = self.try_predict_current(LexTokenType::While)?;
+        let _ = self.try_predict_current(LexTokenType::LParen)?;
+
+        let cond = self.parse_expression(0)?;
+
+        let _ = self.try_predict_current(LexTokenType::RParen)?;
+
+        let body = self.try_parse_statement_block()?;
+
+        Some(ASTNode::new(ASTNodeType::While(ASTWhile { cond, body })))
+    }
+
+    fn parse_current(&mut self) -> ASTNode {
+        match self.current().ty {
+            LexTokenType::While => return self.try_parse_while().unwrap(),
+            LexTokenType::EOF => return ASTNode::new(ASTNodeType::EOF),
+            _ => (),
+        };
 
         self.set_checkpoint(self.pos);
         if let Some(node) = self.try_parse_var() {
@@ -428,6 +475,10 @@ impl Parser {
         }
         self.return_checkpoint();
         if let Some(node) = self.try_parse_func() {
+            return node;
+        }
+        self.return_checkpoint();
+        if let Some(node) = self.try_parse_expression_statement() {
             return node;
         }
         
@@ -541,6 +592,41 @@ mod tests {
         } else {
             panic!("Not a conditional expression");
         }
+    }
+
+    fn get_first_node(res: ASTNode) -> ASTNode {
+        match res.ty {
+            ASTNodeType::Root(root) => root.statements[0].clone(),
+            _ => panic!("Expected a root node"),
+        }
+    }
+
+    #[test]
+    fn simple_test_while_single() {
+        let mut parser = Parser::new("while (1 + 1) a = a + 1;");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::While(wh) => {
+                assert_eq!(wh.body.len(), 1);
+            }
+            _ => panic!("Expected a while node"),
+        };
+    }
+
+    #[test]
+    fn simple_test_while_mult() {
+        let mut parser = Parser::new("while (1) { int a = 2; b = b + 1; }");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::While(wh) => {
+                assert_eq!(wh.body.len(), 2);
+            }
+            _ => panic!("Expected a while node"),
+        };
     }
 
 }

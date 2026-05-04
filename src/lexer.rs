@@ -13,8 +13,10 @@ pub enum LexTokenType {
     Float,
     Long,
     Double,
-    Identifier,
 
+    While,
+
+    Identifier,
     Numeral,
     String,
 
@@ -31,6 +33,9 @@ pub enum LexTokenType {
     Div,
     Question,
     Colon,
+
+    LessThan,
+    BiggerThan,
 
     LParen,
     RParen,
@@ -165,6 +170,9 @@ impl Lexer {
             "long" => LexTokenType::Long,
             "float" => LexTokenType::Float,
             "double" => LexTokenType::Double,
+
+            "while" => LexTokenType::While,
+
             _ => LexTokenType::Identifier,
         }
     }
@@ -260,6 +268,8 @@ impl Lexer {
             '/' => self.make_token_advance(LexTokenType::Div),
             '?' => self.make_token_advance(LexTokenType::Question),
             ':' => self.make_token_advance(LexTokenType::Colon),
+            '<' => self.make_token_advance(LexTokenType::LessThan),
+            '>' => self.make_token_advance(LexTokenType::BiggerThan),
             '(' => self.make_token_advance(LexTokenType::LParen),
             ')' => self.make_token_advance(LexTokenType::RParen),
             '[' => self.make_token_advance(LexTokenType::LSquare),

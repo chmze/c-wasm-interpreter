@@ -188,6 +188,24 @@ macro_rules! apply_binary_op {
     }
 }
 
+macro_rules! apply_logic_binary_op {
+    ($left:expr, $right:expr, $op:tt) => {
+        match ($left, $right) {
+            (StorableValue::I8(l), StorableValue::I8(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::U8(l), StorableValue::U8(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::I16(l), StorableValue::I16(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::U16(l), StorableValue::U16(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::I32(l), StorableValue::I32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::U32(l), StorableValue::U32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::U64(l), StorableValue::U64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl Interpreter {
     pub fn new(s: &str) -> Self {
         let mut parser = Parser::new(s);
@@ -316,7 +334,7 @@ impl Interpreter {
         }
     }
 
-    fn exec_binary(&self, binary: ASTBinary) -> StorableValue {
+    fn exec_binary_arith_logic(&mut self, binary: ASTBinary) -> StorableValue {
         let left = self.exec_expr(*binary.left);
         let right = self.exec_expr(*binary.right);
 
@@ -327,17 +345,47 @@ impl Interpreter {
             ASTBinaryType::Sub => apply_binary_op!(left, right, -),
             ASTBinaryType::Mult => apply_binary_op!(left, right, *),
             ASTBinaryType::Div => apply_binary_op!(left, right, /),
-            _ => todo!(),
+            ASTBinaryType::LessThan => apply_logic_binary_op!(left, right, <),
+            ASTBinaryType::BiggerThan => apply_logic_binary_op!(left, right, >),
+            _ => unreachable!(),
         }
     }
 
-    fn exec_expr(&self, expr: ASTExpression) -> StorableValue {
+    fn extract_lvalue(&self, expr: ASTExpression) -> ASTIdentifier {
+        match expr {
+            ASTExpression::Identifier(ident) => ident,
+            _ => panic!("Expected an lvalue"),
+        }
+    }
+
+    fn exec_assignment(&mut self, binary: ASTBinary) -> StorableValue {
+        let ident = self.extract_lvalue(*binary.left);
+        let res = self.exec_expr(*binary.right);
+        
+        let var = self.env.get_var(&ident.literal).unwrap();
+        self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
+
+        res
+    }
+
+    fn exec_binary(&mut self, binary: ASTBinary) -> StorableValue {
+        match binary.ty {
+            ASTBinaryType::Assignment => self.exec_assignment(binary),
+            _ => self.exec_binary_arith_logic(binary),
+        }
+    }
+
+    fn exec_expr(&mut self, expr: ASTExpression) -> StorableValue {
         match expr {
             ASTExpression::Identifier(id) => self.exec_identifier(id),
             ASTExpression::Numeral(numeral) => self.exec_numeral(numeral),
             ASTExpression::Binary(binary) => self.exec_binary(binary),
             _ => todo!(),
         }
+    }
+
+    fn exec_expr_statement(&mut self, expr: ASTExpression) {
+        _ = self.exec_expr(expr);
     }
 
     fn exec_root(&mut self, root: ASTRoot) {
@@ -361,13 +409,38 @@ impl Interpreter {
         val.map(|val| self.memory.write_truncated(addr, &val, size));
     }
 
+    fn is_truthy(&self, value: StorableValue) -> bool {
+        match value {
+            StorableValue::I32(v) => v != 0,
+            _ => unreachable!(),
+        }
+    }
+
+    fn exec_while(&mut self, wh: ASTWhile) {
+        loop {
+            let cond = self.exec_expr(wh.cond.clone());
+            if !self.is_truthy(cond) {
+                break;
+            }
+
+            for node in wh.body.clone() {
+                self.exec_node(node);
+            }
+        }
+    }
+
     fn exec_node(&mut self, node: ASTNode) {
         match node.ty {
             ASTNodeType::Root(root) => self.exec_root(root),
+
             ASTNodeType::Func(func) => self.exec_func(func),
             ASTNodeType::Var(var) => self.exec_var(var),
+            ASTNodeType::Expression(expr) => self.exec_expr_statement(expr),
+
+            ASTNodeType::While(wh) => self.exec_while(wh),
+
             ASTNodeType::EOF => (),
-        }
+        };
     }
 
     pub fn execute(&mut self) -> Option<Exec> {
@@ -431,7 +504,17 @@ mod tests {
         let mut i = Interpreter::new("short int a = 3; unsigned long int b = a + 4; int c = a + b * 4 / 2; int d = b;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!("Log test");
+        assert_eq!(exec.memory[2], 7);
+        assert_eq!(exec.memory[3], 0);
+    }
+
+    #[test]
+    fn simple_while() {
+        let mut i = Interpreter::new("int a = 1; while (a < 5) a = a + 1;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        assert_eq!(exec.memory[0], 5);
+        assert_eq!(exec.memory[1], 0);
     }
 
 }
