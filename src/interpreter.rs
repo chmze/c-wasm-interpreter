@@ -27,12 +27,14 @@ impl EnvVar {
 }
 
 struct EnvFunc {
-
+    ret_ty: ASTData,
+    params: Vec<ASTFuncParam>,
+    body: Vec<ASTNode>,
 }
 
 impl EnvFunc {
-    fn new() -> Self {
-        Self {}
+    fn new(ret_ty: ASTData, params: Vec<ASTFuncParam>, body: Vec<ASTNode>) -> Self {
+        Self { ret_ty, params, body }
     }
 }
 
@@ -44,20 +46,27 @@ enum EnvDecl {
 struct StackFrame {
     base: u16,
     return_addr: u16,
+    env: Environment,
 }
 
 struct CallStack {
     frames: Vec<StackFrame>,
 }
 
+impl CallStack {
+    pub fn new() -> Self {
+        Self { frames: Vec::new() }
+    }
+}
+
 struct Memory {
     data: [u8; 65536],
-    // allocations: HashMap<u16, (u16, ASTDataType)>,
+    stack: CallStack,
 }
 
 impl Memory {
     pub fn new() -> Self {
-        Self { data: [0; 65536] }
+        Self { data: [0; 65536], stack: CallStack::new() }
     }
 
     fn write_bytes<const N: usize>(&mut self, addr: u16, bytes: [u8; N], limit: Option<usize>) {
@@ -104,6 +113,7 @@ impl Memory {
             (ASTDataType::Long | ASTDataType::LongLong, true) => StorableValue::I64(i64::from_le_bytes(self.get_bytes(addr))),
             (ASTDataType::Float, _) => StorableValue::F32(f32::from_le_bytes(self.get_bytes(addr))),
             (ASTDataType::Double, _) => StorableValue::F64(f64::from_le_bytes(self.get_bytes(addr))),
+            (ASTDataType::Void, _) => unreachable!(),
         }
     }
 
@@ -157,6 +167,13 @@ impl Environment {
 
     fn add_func(&mut self, name: String, func: EnvFunc) {
         self.decls.entry(name).insert_entry(EnvDecl::Func(func));
+    }
+
+    fn get_func(&self, name: &str) -> Option<&EnvFunc> {
+        self.decls.get(name).and_then(|decl| match decl {
+            EnvDecl::Func(func) => Some(func),
+            _ => None,
+        })
     }
 }
 
@@ -375,6 +392,11 @@ impl Interpreter {
         }
     }
 
+    fn exec_invocation(&mut self, invocation: ASTInvocation) -> Option<StorableValue> {
+        let a = self.exec_expr(*invocation.left);
+        None // TODO
+    }
+
     fn exec_expr(&mut self, expr: ASTExpression) -> StorableValue {
         match expr {
             ASTExpression::Identifier(id) => self.exec_identifier(id),
@@ -395,7 +417,12 @@ impl Interpreter {
     }
 
     fn exec_func(&mut self, func: ASTFunc) {
-        todo!()
+        let name = func.name.literal;
+        let ty = func.ty;
+        let params = func.params;
+        let body = func.body;
+
+        self.env.add_func(name, EnvFunc::new(ty, params, body));
     }
 
     fn exec_var(&mut self, var: ASTVar) {
@@ -515,6 +542,14 @@ mod tests {
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[0], 5);
         assert_eq!(exec.memory[1], 0);
+    }
+
+    #[test]
+    fn simple_func() {
+        let mut i = Interpreter::new("int a = 1; void b() { a = a + 1; } b(); b();");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!("Inspection test");
     }
 
 }

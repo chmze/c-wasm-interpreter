@@ -60,6 +60,12 @@ pub struct ASTConditional {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTInvocation {
+    pub left: Box<ASTExpression>,
+    pub params: Vec<ASTExpression>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTExpression {
     Null,
     Identifier(ASTIdentifier),
@@ -67,10 +73,12 @@ pub enum ASTExpression {
     Unary(ASTUnary),
     Binary(ASTBinary),
     Conditional(ASTConditional),
+    Invocation(ASTInvocation),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTDataType {
+    Void,
     Char,
     Short,
     Int,
@@ -249,6 +257,7 @@ impl Parser {
 
     fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
         match ty {
+            LexTokenType::LParen => (1, 2),
             LexTokenType::LessThan | LexTokenType::BiggerThan => (3, 4),
             LexTokenType::Plus | LexTokenType::Minus => (5, 6),
             LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
@@ -286,6 +295,23 @@ impl Parser {
         Some(ASTExpression::Conditional(ASTConditional { cond: Box::new(lhs), then: Box::new(then), or: Box::new(or) }))
     }
 
+    fn parse_invocation_expression(&mut self, lhs: ASTExpression, min_bp: u8) -> Option<ASTExpression> {
+        self.read();
+
+        let mut params = Vec::new();
+
+        while self.try_predict_current(LexTokenType::RParen).is_none() {
+            params.push(self.parse_expression(min_bp)?);
+
+            if self.try_predict_current(LexTokenType::Comma).is_none() {
+                self.try_predict_current(LexTokenType::RParen)?;
+                break;
+            }
+        }
+
+        Some(ASTExpression::Invocation(ASTInvocation { left: Box::new(lhs), params: params }))
+    }
+
     fn parse_infix_expression(&mut self, lhs: ASTExpression, min_bp: u8, ty: LexTokenType) -> Option<ASTExpression> {
         match ty {
             LexTokenType::Plus => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Add),
@@ -297,6 +323,7 @@ impl Parser {
             LexTokenType::Assign => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Assignment),
             LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
             LexTokenType::Question => self.parse_conditional_expression(lhs, min_bp),
+            LexTokenType::LParen => self.parse_invocation_expression(lhs, min_bp),
             _ => Some(ASTExpression::Null),
         }
     }
@@ -346,6 +373,7 @@ impl Parser {
         };
 
         let ty = match self.current().ty {
+            LexTokenType::Void => ASTDataType::Void,
             LexTokenType::Char => ASTDataType::Char,
             LexTokenType::Short => ASTDataType::Short,
             LexTokenType::Int => ASTDataType::Int,
@@ -627,6 +655,35 @@ mod tests {
             }
             _ => panic!("Expected a while node"),
         };
+    }
+
+    #[test]
+    fn simple_test_func() {
+        let mut parser = Parser::new("void b() { int a = c + 1; }");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::Func(func) => {
+                assert_eq!(func.ty.ty, ASTDataType::Void);
+                assert_eq!(func.name.literal, "b");
+                assert_eq!(func.params.len(), 0);
+                assert_eq!(func.body.len(), 1);
+            }
+            _ => panic!("Expected a function node"),
+        };
+    }
+
+    #[test]
+    fn simple_test_invocation() {
+        let mut parser = Parser::new("d(24, c, a + b)");
+        let res = parser.parse_expression(0).unwrap();
+
+        if let ASTExpression::Invocation(inv) = res {
+            assert_eq!(inv.params.len(), 3);
+        } else {
+            panic!("Not an invocation expression");
+        }
     }
 
 }

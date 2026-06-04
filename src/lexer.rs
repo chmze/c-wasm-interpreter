@@ -5,6 +5,7 @@ pub struct StringTokenProps {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LexTokenType {
+    Void,
     Unsigned,
     Signed,
     Char,
@@ -162,6 +163,7 @@ impl Lexer {
         let literal = self.get_literal(start, end);
 
         match literal {
+            "void" => LexTokenType::Void,
             "unsigned" => LexTokenType::Unsigned,
             "signed" => LexTokenType::Signed,
             "char" => LexTokenType::Char,
@@ -358,7 +360,7 @@ mod tests {
         let mut lexer = Lexer::new("+++----");
         let res = lexer.read();
 
-        //assert_eq!(res.len(), 5);
+        assert_eq!(res.len(), 5);
         assert_eq!(res[0].ty, LexTokenType::PlusPlus);
         assert_eq!(res[1].ty, LexTokenType::Plus);
         assert_eq!(res[2].ty, LexTokenType::MinusMinus);
