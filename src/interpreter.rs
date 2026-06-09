@@ -15,7 +15,20 @@ pub enum StorableValue {
     F64(f64),
 }
 
-struct EnvVar {
+pub enum ExprResult {
+    LValue(String),
+    RValue(StorableValue),
+}
+
+pub enum ExecResult {
+    None,
+    Return(Option<StorableValue>),
+    Break,
+    Continue,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnvVar {
     address: u16,
     ty: ASTData,
 }
@@ -26,7 +39,8 @@ impl EnvVar {
     }
 }
 
-struct EnvFunc {
+#[derive(Clone, Debug)]
+pub struct EnvFunc {
     ret_ty: ASTData,
     params: Vec<ASTFuncParam>,
     body: Vec<ASTNode>,
@@ -38,15 +52,15 @@ impl EnvFunc {
     }
 }
 
-enum EnvDecl {
+pub enum EnvDecl {
     Var(EnvVar),
     Func(EnvFunc),
 }
 
 struct StackFrame {
-    base: u16,
-    return_addr: u16,
-    env: Environment,
+    base_ptr: u16,
+    saved_ptr: u16,
+    scope_index: usize,
 }
 
 struct CallStack {
@@ -57,16 +71,27 @@ impl CallStack {
     pub fn new() -> Self {
         Self { frames: Vec::new() }
     }
+
+    pub fn top(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn push(&mut self, base_ptr: u16, saved_ptr: u16, scope_index: usize) {
+        self.frames.push(StackFrame { base_ptr, saved_ptr, scope_index });
+    }
+
+    pub fn pop(&mut self) {
+        self.frames.pop();
+    }
 }
 
 struct Memory {
-    data: [u8; 65536],
-    stack: CallStack,
+    pub data: [u8; 65536],
 }
 
 impl Memory {
     pub fn new() -> Self {
-        Self { data: [0; 65536], stack: CallStack::new() }
+        Self { data: [0; 65536] }
     }
 
     fn write_bytes<const N: usize>(&mut self, addr: u16, bytes: [u8; N], limit: Option<usize>) {
@@ -140,40 +165,59 @@ impl Memory {
 }
 
 pub struct Environment {
-    decls: HashMap<String, EnvDecl>,
+    scopes: Vec<HashMap<String, EnvDecl>>,
     ptr: u16,
 }
 
 impl Environment {
-    fn new() -> Self {
-        Environment { decls: HashMap::new(), ptr: 0 }
+    pub fn new() -> Self {
+        Environment { scopes: vec![HashMap::new()], ptr: 0 }
     }
 
-    fn ptr(&self) -> u16 {
+    pub fn ptr(&self) -> u16 {
         self.ptr
     }
 
-    fn add_var(&mut self, name: String, var: EnvVar, size: u16) {
-        self.decls.entry(name).insert_entry(EnvDecl::Var(var));
+    pub fn top(&self) -> usize {
+        self.scopes.len() - 1
+    }
+
+    pub fn get_decl(&self, name: &str) -> Option<&EnvDecl> {
+        self.scopes.iter().rev().find_map(|el| el.get(name))
+    }
+
+    pub fn add_var(&mut self, name: String, var: EnvVar, size: u16) {
+        let top = self.top();
+        self.scopes[top].entry(name).insert_entry(EnvDecl::Var(var));
         self.ptr += size;
     }
 
-    fn get_var(&self, name: &str) -> Option<&EnvVar> {
-        self.decls.get(name).and_then(|decl| match decl {
+    pub fn get_var(&self, name: &str) -> Option<&EnvVar> {
+        self.get_decl(name).and_then(|decl| match decl {
             EnvDecl::Var(var) => Some(var),
             _ => None,
         })
     }
 
-    fn add_func(&mut self, name: String, func: EnvFunc) {
-        self.decls.entry(name).insert_entry(EnvDecl::Func(func));
+    pub fn add_func(&mut self, name: String, func: EnvFunc) {
+        let top = self.top();
+        self.scopes[top].entry(name).insert_entry(EnvDecl::Func(func));
     }
 
-    fn get_func(&self, name: &str) -> Option<&EnvFunc> {
-        self.decls.get(name).and_then(|decl| match decl {
+    pub fn get_func(&self, name: &str) -> Option<&EnvFunc> {
+        self.get_decl(name).and_then(|decl| match decl {
             EnvDecl::Func(func) => Some(func),
             _ => None,
         })
+    }
+
+    pub fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    pub fn pop_scope(&mut self, saved_ptr: u16) {
+        self.scopes.pop();
+        self.ptr = saved_ptr;
     }
 }
 
@@ -185,21 +229,22 @@ pub struct Interpreter {
     root: ASTNode,
     memory: Memory,
     env: Environment,
+    stack: CallStack,
 }
 
 macro_rules! apply_binary_op {
     ($left:expr, $right:expr, $op:tt) => {
         match ($left, $right) {
-            (StorableValue::I8(l), StorableValue::I8(r)) => StorableValue::I8(l $op r),
-            (StorableValue::U8(l), StorableValue::U8(r)) => StorableValue::U8(l $op r),
-            (StorableValue::I16(l), StorableValue::I16(r)) => StorableValue::I16(l $op r),
-            (StorableValue::U16(l), StorableValue::U16(r)) => StorableValue::U16(l $op r),
-            (StorableValue::I32(l), StorableValue::I32(r)) => StorableValue::I32(l $op r),
-            (StorableValue::U32(l), StorableValue::U32(r)) => StorableValue::U32(l $op r),
-            (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I64(l $op r),
-            (StorableValue::U64(l), StorableValue::U64(r)) => StorableValue::U64(l $op r),
-            (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::F32(l $op r),
-            (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::F64(l $op r),
+            (StorableValue::I8(l), StorableValue::I8(r)) => Some(StorableValue::I8(l $op r)),
+            (StorableValue::U8(l), StorableValue::U8(r)) => Some(StorableValue::U8(l $op r)),
+            (StorableValue::I16(l), StorableValue::I16(r)) => Some(StorableValue::I16(l $op r)),
+            (StorableValue::U16(l), StorableValue::U16(r)) => Some(StorableValue::U16(l $op r)),
+            (StorableValue::I32(l), StorableValue::I32(r)) => Some(StorableValue::I32(l $op r)),
+            (StorableValue::U32(l), StorableValue::U32(r)) => Some(StorableValue::U32(l $op r)),
+            (StorableValue::I64(l), StorableValue::I64(r)) => Some(StorableValue::I64(l $op r)),
+            (StorableValue::U64(l), StorableValue::U64(r)) => Some(StorableValue::U64(l $op r)),
+            (StorableValue::F32(l), StorableValue::F32(r)) => Some(StorableValue::F32(l $op r)),
+            (StorableValue::F64(l), StorableValue::F64(r)) => Some(StorableValue::F64(l $op r)),
             _ => unreachable!(),
         }
     }
@@ -208,16 +253,16 @@ macro_rules! apply_binary_op {
 macro_rules! apply_logic_binary_op {
     ($left:expr, $right:expr, $op:tt) => {
         match ($left, $right) {
-            (StorableValue::I8(l), StorableValue::I8(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::U8(l), StorableValue::U8(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::I16(l), StorableValue::I16(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::U16(l), StorableValue::U16(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::I32(l), StorableValue::I32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::U32(l), StorableValue::U32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::I64(l), StorableValue::I64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::U64(l), StorableValue::U64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::F32(l), StorableValue::F32(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
-            (StorableValue::F64(l), StorableValue::F64(r)) => StorableValue::I32(if l $op r { 1 } else { 0 }),
+            (StorableValue::I8(l), StorableValue::I8(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::U8(l), StorableValue::U8(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::I16(l), StorableValue::I16(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::U16(l), StorableValue::U16(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::I32(l), StorableValue::I32(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::U32(l), StorableValue::U32(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::I64(l), StorableValue::I64(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::U64(l), StorableValue::U64(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::F32(l), StorableValue::F32(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
+            (StorableValue::F64(l), StorableValue::F64(r)) => Some(StorableValue::I32(if l $op r { 1 } else { 0 })),
             _ => unreachable!(),
         }
     }
@@ -228,11 +273,11 @@ impl Interpreter {
         let mut parser = Parser::new(s);
         let root = parser.parse();
 
-        Self { root, memory: Memory::new(), env: Environment::new() }
+        Self { root, memory: Memory::new(), env: Environment::new(), stack: CallStack::new() }
     }
 
     pub fn new_with_node(root: ASTNode) -> Self {
-        Self { root, memory: Memory::new(), env: Environment::new() }
+        Self { root, memory: Memory::new(), env: Environment::new(), stack: CallStack::new()}
     }
 
     fn get_digit(&self, c: char) -> u64 {
@@ -242,12 +287,12 @@ impl Interpreter {
         }
     }
 
-    fn exec_identifier(&self, identifier: ASTIdentifier) -> StorableValue {
+    fn exec_identifier(&self, identifier: ASTIdentifier) -> Option<ExprResult> {
         let var = self.env.get_var(&identifier.literal).unwrap();
-        self.memory.read(var.address, &var.ty)
+        Some(ExprResult::RValue(self.memory.read(var.address, &var.ty)))
     }
 
-    fn exec_numeral(&self, numeral: ASTNumeral) -> StorableValue {
+    fn exec_numeral(&self, numeral: ASTNumeral) -> Option<StorableValue> {
         let literal = numeral.literal;
         let mut acc: u64 = 0;
 
@@ -265,11 +310,11 @@ impl Interpreter {
         }
 
         if acc <= i32::MAX as u64 {
-            StorableValue::I32(acc as i32)
+            Some(StorableValue::I32(acc as i32))
         } else if acc <= i64::MAX as u64 {
-            StorableValue::I64(acc as i64)
+            Some(StorableValue::I64(acc as i64))
         } else {
-            StorableValue::I8(0) // temp
+            Some(StorableValue::I8(0))
         }
     }
 
@@ -351,9 +396,9 @@ impl Interpreter {
         }
     }
 
-    fn exec_binary_arith_logic(&mut self, binary: ASTBinary) -> StorableValue {
-        let left = self.exec_expr(*binary.left);
-        let right = self.exec_expr(*binary.right);
+    fn exec_binary_arith_logic(&mut self, binary: ASTBinary) -> Option<StorableValue> {
+        let left = self.exec_rvalue_expr(*binary.left)?;
+        let right = self.exec_rvalue_expr(*binary.right)?;
 
         let (left, right) = self.convert(left, right);
 
@@ -371,39 +416,75 @@ impl Interpreter {
     fn extract_lvalue(&self, expr: ASTExpression) -> ASTIdentifier {
         match expr {
             ASTExpression::Identifier(ident) => ident,
-            _ => panic!("Expected an lvalue"),
+            _ => panic!("Expected an lvalue"), // TODO: handle more expressions
         }
     }
 
-    fn exec_assignment(&mut self, binary: ASTBinary) -> StorableValue {
+    fn exec_assignment(&mut self, binary: ASTBinary) -> Option<StorableValue> {
         let ident = self.extract_lvalue(*binary.left);
-        let res = self.exec_expr(*binary.right);
+        let res = self.exec_rvalue_expr(*binary.right)?;
         
         let var = self.env.get_var(&ident.literal).unwrap();
         self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
 
-        res
+        Some(res)
     }
 
-    fn exec_binary(&mut self, binary: ASTBinary) -> StorableValue {
+    fn exec_binary(&mut self, binary: ASTBinary) -> Option<StorableValue> {
         match binary.ty {
             ASTBinaryType::Assignment => self.exec_assignment(binary),
             _ => self.exec_binary_arith_logic(binary),
         }
     }
 
-    fn exec_invocation(&mut self, invocation: ASTInvocation) -> Option<StorableValue> {
-        let a = self.exec_expr(*invocation.left);
-        None // TODO
+    fn exec_body(&mut self, body: Vec<ASTNode>) -> ExecResult {
+        for node in body {
+            self.exec_node(node);
+        }
+
+        ExecResult::None
     }
 
-    fn exec_expr(&mut self, expr: ASTExpression) -> StorableValue {
+    fn exec_invocation(&mut self, invocation: ASTInvocation) -> Option<StorableValue> {
+        let name = self.extract_lvalue(*invocation.left);
+        let func = self.env.get_func(&name.literal)?.to_owned();
+
+        if invocation.params.len() != func.params.len() {
+            return None;
+        }
+
+        let saved_ptr = self.env.ptr();
+        self.env.push_scope();
+
+        for (inv_param, func_param) in invocation.params.into_iter().zip(func.params.into_iter()) {
+            let value = self.exec_rvalue_expr(inv_param)?;
+            self.init_var(func_param.name.literal, func_param.ty, Some(value));
+        }
+
+        self.stack.push(self.env.ptr(), saved_ptr, self.env.top());
+
+        let _res = self.exec_body(func.body);
+
+        self.env.pop_scope(saved_ptr);
+
+        None
+    }
+
+    fn exec_expr(&mut self, expr: ASTExpression) -> Option<ExprResult> {
         match expr {
             ASTExpression::Identifier(id) => self.exec_identifier(id),
-            ASTExpression::Numeral(numeral) => self.exec_numeral(numeral),
-            ASTExpression::Binary(binary) => self.exec_binary(binary),
+            ASTExpression::Numeral(numeral) => self.exec_numeral(numeral).map(|r| ExprResult::RValue(r)),
+            ASTExpression::Binary(binary) => self.exec_binary(binary).map(|r| ExprResult::RValue(r)),
+            ASTExpression::Invocation(invocation) => self.exec_invocation(invocation).map(|r| ExprResult::RValue(r)),
             _ => todo!(),
         }
+    }
+
+    fn exec_rvalue_expr(&mut self, expr: ASTExpression) -> Option<StorableValue> {
+        self.exec_expr(expr).and_then(|res| match res {
+            ExprResult::RValue(rval) => Some(rval),
+            _ => None,
+        })
     }
 
     fn exec_expr_statement(&mut self, expr: ASTExpression) {
@@ -425,15 +506,20 @@ impl Interpreter {
         self.env.add_func(name, EnvFunc::new(ty, params, body));
     }
 
+    fn init_var(&mut self, name: String, ty: ASTData, value: Option<StorableValue>) {
+        let addr = self.env.ptr();
+        let size = self.memory.get_size(&ty);
+
+        self.env.add_var(name, EnvVar::new(addr, ty.clone()), size);
+        value.map(|val| self.memory.write_truncated(addr, &val, size));
+    }
+
     fn exec_var(&mut self, var: ASTVar) {
         let name = var.name.literal;
         let ty = var.ty;
-        let addr = self.env.ptr();
-        let val = var.initializer.map(|expr| self.exec_expr(expr));
+        let val = var.initializer.map(|expr| self.exec_rvalue_expr(expr).unwrap());
 
-        let size = self.memory.get_size(&ty);
-        self.env.add_var(name, EnvVar::new(addr, ty.clone()), size);
-        val.map(|val| self.memory.write_truncated(addr, &val, size));
+        self.init_var(name, ty, val);
     }
 
     fn is_truthy(&self, value: StorableValue) -> bool {
@@ -445,7 +531,7 @@ impl Interpreter {
 
     fn exec_while(&mut self, wh: ASTWhile) {
         loop {
-            let cond = self.exec_expr(wh.cond.clone());
+            let cond = self.exec_rvalue_expr(wh.cond.clone()).unwrap();
             if !self.is_truthy(cond) {
                 break;
             }
@@ -456,7 +542,7 @@ impl Interpreter {
         }
     }
 
-    fn exec_node(&mut self, node: ASTNode) {
+    fn exec_node(&mut self, node: ASTNode) -> ExecResult {
         match node.ty {
             ASTNodeType::Root(root) => self.exec_root(root),
 
@@ -468,6 +554,8 @@ impl Interpreter {
 
             ASTNodeType::EOF => (),
         };
+
+        ExecResult::None // TODO: temp
     }
 
     pub fn execute(&mut self) -> Option<Exec> {
@@ -546,10 +634,10 @@ mod tests {
 
     #[test]
     fn simple_func() {
-        let mut i = Interpreter::new("int a = 1; void b() { a = a + 1; } b(); b();");
+        let mut i = Interpreter::new("int a = 1; void b(int d) { int c = 1; a = a + c + d; } while (a < 10) b(a);");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!("Inspection test");
+        assert_eq!(exec.memory[0], 15);
     }
 
 }
