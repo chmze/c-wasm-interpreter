@@ -408,7 +408,8 @@ impl Interpreter {
             ASTBinaryType::Mult => apply_binary_op!(left, right, *),
             ASTBinaryType::Div => apply_binary_op!(left, right, /),
             ASTBinaryType::LessThan => apply_logic_binary_op!(left, right, <),
-            ASTBinaryType::BiggerThan => apply_logic_binary_op!(left, right, >),
+            ASTBinaryType::LessOrEq => apply_logic_binary_op!(left, right, <=),
+            ASTBinaryType::GreaterThan => apply_logic_binary_op!(left, right, >),
             _ => unreachable!(),
         }
     }
@@ -437,12 +438,15 @@ impl Interpreter {
         }
     }
 
-    fn exec_body(&mut self, body: Vec<ASTNode>) -> ExecResult {
+    fn exec_body(&mut self, body: Vec<ASTNode>) -> Option<ExecResult> {
         for node in body {
-            self.exec_node(node);
+            match self.exec_node(node)? {
+                ExecResult::Return(val) => return Some(ExecResult::Return(val)),
+                _ => (),
+            };
         }
 
-        ExecResult::None
+        Some(ExecResult::None)
     }
 
     fn exec_invocation(&mut self, invocation: ASTInvocation) -> Option<StorableValue> {
@@ -463,11 +467,15 @@ impl Interpreter {
 
         self.stack.push(self.env.ptr(), saved_ptr, self.env.top());
 
-        let _res = self.exec_body(func.body);
+        let res = self.exec_body(func.body)?;
 
         self.env.pop_scope(saved_ptr);
 
-        None
+        match res {
+            ExecResult::Return(val) => val,
+            ExecResult::None => None,
+            _ => panic!("Expected an optional return value"),
+        }
     }
 
     fn exec_expr(&mut self, expr: ASTExpression) -> Option<ExprResult> {
@@ -529,20 +537,56 @@ impl Interpreter {
         }
     }
 
-    fn exec_while(&mut self, wh: ASTWhile) {
-        loop {
-            let cond = self.exec_rvalue_expr(wh.cond.clone()).unwrap();
+    fn exec_if(&mut self, i: ASTIf) -> Option<ExecResult> {
+        let cond = self.exec_rvalue_expr(i.cond)?;
+        if !self.is_truthy(cond) {
+            return Some(ExecResult::None);
+        }
+
+        self.exec_body(i.body)
+    }
+
+    fn exec_while(&mut self, wh: ASTWhile) -> Option<ExecResult> {
+        'exec: loop {
+            let cond = self.exec_rvalue_expr(wh.cond.clone())?;
             if !self.is_truthy(cond) {
                 break;
             }
 
             for node in wh.body.clone() {
-                self.exec_node(node);
+                let res = self.exec_node(node)?;
+                
+                match res {
+                    ExecResult::Break => break 'exec,
+                    ExecResult::Continue => break,
+                    ExecResult::Return(val) => return Some(ExecResult::Return(val)),
+                    _ => (),
+                }
             }
+        }
+
+        Some(ExecResult::None)
+    }
+
+    fn exec_break(&mut self, _: ASTBreak) -> ExecResult {
+        ExecResult::Break
+    }
+
+    fn exec_continue(&mut self, _: ASTContinue) -> ExecResult {
+        ExecResult::Continue
+    }
+
+    fn exec_return(&mut self, ret: ASTReturn) -> Option<ExecResult> {
+        match ret.expr {
+            Some(expr) => {
+                let res = self.exec_rvalue_expr(expr)?;
+                Some(ExecResult::Return(Some(res)))
+            }
+            None => Some(ExecResult::Return(None))
         }
     }
 
-    fn exec_node(&mut self, node: ASTNode) -> ExecResult {
+    fn exec_node(&mut self, node: ASTNode) -> Option<ExecResult> {
         match node.ty {
             ASTNodeType::Root(root) => self.exec_root(root),
 
@@ -550,16 +594,20 @@ impl Interpreter {
             ASTNodeType::Var(var) => self.exec_var(var),
             ASTNodeType::Expression(expr) => self.exec_expr_statement(expr),
 
-            ASTNodeType::While(wh) => self.exec_while(wh),
+            ASTNodeType::If(i) => return self.exec_if(i),
+            ASTNodeType::While(wh) => return self.exec_while(wh),
+            ASTNodeType::Break(br) => return Some(self.exec_break(br)),
+            ASTNodeType::Continue(cn) => return Some(self.exec_continue(cn)),
+            ASTNodeType::Return(ret) => return self.exec_return(ret),
 
             ASTNodeType::EOF => (),
         };
 
-        ExecResult::None // TODO: temp
+        Some(ExecResult::None)
     }
 
     pub fn execute(&mut self) -> Option<Exec> {
-        self.exec_node(self.root.clone());
+        self.exec_node(self.root.clone())?;
         Some(Exec { memory: self.memory.data.clone() })
     }
 }
@@ -633,11 +681,31 @@ mod tests {
     }
 
     #[test]
+    fn simple_continue() {
+        let mut i = Interpreter::new("int a = 1; while (a < 1) { a = a + 1; }");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+    }
+
+    #[test]
     fn simple_func() {
         let mut i = Interpreter::new("int a = 1; void b(int d) { int c = 1; a = a + c + d; } while (a < 10) b(a);");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[0], 15);
+
+        let mut i = Interpreter::new("int a = 1; void b(int d) { d = d + 1; while(1) return a + d; } a = b(2) - 1;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        assert_eq!(exec.memory[0], 3);
+    }
+
+    #[test]
+    fn simple_fib() {
+        let mut i = Interpreter::new("int fib(int n) { if (n <= 1) return n; return fib(n - 1) + fib(n - 2); } int result = fib(10);");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!();
     }
 
 }

@@ -40,7 +40,8 @@ pub enum ASTBinaryType {
     Mult,
     Div,
     LessThan,
-    BiggerThan,
+    LessOrEq,
+    GreaterThan,
     Indexing,
     Assignment,
 }
@@ -116,9 +117,28 @@ pub struct ASTFunc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTIf {
+    pub cond: ASTExpression,
+    pub body: Vec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTWhile {
     pub cond: ASTExpression,
     pub body: Vec<ASTNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTBreak {
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTContinue {
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTReturn {
+    pub expr: Option<ASTExpression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,7 +149,12 @@ pub enum ASTNodeType {
     Func(ASTFunc),
     Expression(ASTExpression),
 
+    If(ASTIf),
     While(ASTWhile),
+    Break(ASTBreak),
+    Continue(ASTContinue),
+    Return(ASTReturn),
+
     EOF,
 }
 
@@ -257,11 +282,11 @@ impl Parser {
 
     fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
         match ty {
-            LexTokenType::LParen => (1, 2),
-            LexTokenType::LessThan | LexTokenType::BiggerThan => (3, 4),
+            LexTokenType::LessThan | LexTokenType::LessOrEq | LexTokenType::GreaterThan | LexTokenType::GreaterOrEq => (3, 4),
             LexTokenType::Plus | LexTokenType::Minus => (5, 6),
             LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
             LexTokenType::Assign => (2, 1),
+            LexTokenType::LParen => (13, 14),
             LexTokenType::LSquare => (13, 13),
             LexTokenType::Question => (4, 3),
             _ => (0, 0),
@@ -295,13 +320,13 @@ impl Parser {
         Some(ASTExpression::Conditional(ASTConditional { cond: Box::new(lhs), then: Box::new(then), or: Box::new(or) }))
     }
 
-    fn parse_invocation_expression(&mut self, lhs: ASTExpression, min_bp: u8) -> Option<ASTExpression> {
+    fn parse_invocation_expression(&mut self, lhs: ASTExpression, _: u8) -> Option<ASTExpression> {
         self.read();
 
         let mut params = Vec::new();
 
         while self.try_predict_current(LexTokenType::RParen).is_none() {
-            params.push(self.parse_expression(min_bp)?);
+            params.push(self.parse_expression(0)?);
 
             if self.try_predict_current(LexTokenType::Comma).is_none() {
                 self.try_predict_current(LexTokenType::RParen)?;
@@ -319,7 +344,8 @@ impl Parser {
             LexTokenType::Asterisk => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Mult),
             LexTokenType::Div => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Div),
             LexTokenType::LessThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessThan),
-            LexTokenType::BiggerThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::BiggerThan),
+            LexTokenType::LessOrEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessOrEq),
+            LexTokenType::GreaterThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::GreaterThan),
             LexTokenType::Assign => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Assignment),
             LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
             LexTokenType::Question => self.parse_conditional_expression(lhs, min_bp),
@@ -477,22 +503,67 @@ impl Parser {
         }
     }
 
-    fn try_parse_while(&mut self) -> Option<ASTNode> {
-        let _ = self.try_predict_current(LexTokenType::While)?;
-        let _ = self.try_predict_current(LexTokenType::LParen)?;
+    fn try_parse_if(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::If)?;
+        self.try_predict_current(LexTokenType::LParen)?;
 
         let cond = self.parse_expression(0)?;
 
-        let _ = self.try_predict_current(LexTokenType::RParen)?;
+        self.try_predict_current(LexTokenType::RParen)?;
+
+        let body = self.try_parse_statement_block()?;
+
+        Some(ASTNode::new(ASTNodeType::If(ASTIf { cond, body })))
+    }
+
+    fn try_parse_while(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::While)?;
+        self.try_predict_current(LexTokenType::LParen)?;
+
+        let cond = self.parse_expression(0)?;
+
+        self.try_predict_current(LexTokenType::RParen)?;
 
         let body = self.try_parse_statement_block()?;
 
         Some(ASTNode::new(ASTNodeType::While(ASTWhile { cond, body })))
     }
 
+    fn try_parse_break(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::Break)?;
+        self.try_predict_current(LexTokenType::Semi)?;
+
+        Some(ASTNode::new(ASTNodeType::Break(ASTBreak {})))
+    }
+
+    fn try_parse_continue(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::Continue)?;
+        self.try_predict_current(LexTokenType::Semi)?;
+
+        Some(ASTNode::new(ASTNodeType::Continue(ASTContinue {})))
+    }
+
+    fn try_parse_return(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::Return)?;
+
+        if self.try_predict_current(LexTokenType::Semi).is_some() {
+            return Some(ASTNode::new(ASTNodeType::Return(ASTReturn { expr: None })));
+        }
+
+        let expr = self.parse_expression(0)?;
+        
+        self.try_predict_current(LexTokenType::Semi)?;
+
+        Some(ASTNode::new(ASTNodeType::Return(ASTReturn { expr: Some(expr) })))
+    }
+
     fn parse_current(&mut self) -> ASTNode {
         match self.current().ty {
+            LexTokenType::If => return self.try_parse_if().unwrap(),
             LexTokenType::While => return self.try_parse_while().unwrap(),
+            LexTokenType::Break => return self.try_parse_break().unwrap(),
+            LexTokenType::Continue => return self.try_parse_continue().unwrap(),
+            LexTokenType::Return => return self.try_parse_return().unwrap(),
             LexTokenType::EOF => return ASTNode::new(ASTNodeType::EOF),
             _ => (),
         };
@@ -629,6 +700,27 @@ mod tests {
         }
     }
 
+    fn get_nodes(res: ASTNode) -> Vec<ASTNode> {
+        match res.ty {
+            ASTNodeType::Root(root) => root.statements.clone(),
+            _ => panic!("Expected a root node"),
+        }
+    }
+
+    #[test]
+    fn simple_test_if() {
+        let mut parser = Parser::new("if (1 + 0) a = a + 1;");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::If(i) => {
+                assert_eq!(i.body.len(), 1);
+            }
+            _ => panic!("Expected an if node"),
+        };
+    }
+
     #[test]
     fn simple_test_while_single() {
         let mut parser = Parser::new("while (1 + 1) a = a + 1;");
@@ -658,8 +750,54 @@ mod tests {
     }
 
     #[test]
+    fn simple_test_break_continue() {
+        let mut parser = Parser::new("break;");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::Break(_) => {
+            }
+            _ => panic!("Expected a break node"),
+        };
+
+        let mut parser = Parser::new("continue;");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::Continue(_) => {
+            }
+            _ => panic!("Expected a continue node"),
+        };
+    }
+
+    #[test]
+    fn simple_test_return() {
+        let mut parser = Parser::new("return; return a + b * c;");
+        let res = parser.parse();
+        let nodes = get_nodes(res);
+
+        assert_eq!(nodes.len(), 2);
+
+        match nodes[0].ty {
+            ASTNodeType::Return(ref wh) => {
+                assert!(wh.expr.is_none());
+            }
+            _ => panic!("Expected a return node"),
+        };
+
+        match nodes[1].ty {
+            ASTNodeType::Return(ref wh) => {
+                assert!(wh.expr.is_some());
+            }
+            _ => panic!("Expected a return node"),
+        };
+    }
+
+    #[test]
     fn simple_test_func() {
-        let mut parser = Parser::new("void b() { int a = c + 1; }");
+        let mut parser = Parser::new("void b() { int a = c + 1; return b() + b(); }");
         let res = parser.parse();
         let node = get_first_node(res);
 
@@ -668,7 +806,10 @@ mod tests {
                 assert_eq!(func.ty.ty, ASTDataType::Void);
                 assert_eq!(func.name.literal, "b");
                 assert_eq!(func.params.len(), 0);
-                assert_eq!(func.body.len(), 1);
+                assert_eq!(func.body.len(), 2);
+
+        println!("{:?}", func.body);
+        panic!();
             }
             _ => panic!("Expected a function node"),
         };

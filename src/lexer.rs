@@ -15,7 +15,11 @@ pub enum LexTokenType {
     Long,
     Double,
 
+    If,
     While,
+    Break,
+    Continue,
+    Return,
 
     Identifier,
     Numeral,
@@ -36,7 +40,9 @@ pub enum LexTokenType {
     Colon,
 
     LessThan,
-    BiggerThan,
+    LessOrEq,
+    GreaterThan,
+    GreaterOrEq,
 
     LParen,
     RParen,
@@ -173,7 +179,11 @@ impl Lexer {
             "float" => LexTokenType::Float,
             "double" => LexTokenType::Double,
 
+            "if" => LexTokenType::If,
             "while" => LexTokenType::While,
+            "break" => LexTokenType::Break,
+            "continue" => LexTokenType::Continue,
+            "return" => LexTokenType::Return,
 
             _ => LexTokenType::Identifier,
         }
@@ -246,6 +256,24 @@ impl Lexer {
         }
     }
 
+    fn read_lt(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::LessOrEq),
+            _ => self.make_token_advance(LexTokenType::LessThan),
+        }
+    }
+
+    fn read_gt(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::GreaterOrEq),
+            _ => self.make_token_advance(LexTokenType::GreaterThan),
+        }
+    }
+
     fn skip_whitespace(&mut self) {
         while self.current_ch().is_whitespace() {
             self.read_ch();
@@ -270,8 +298,8 @@ impl Lexer {
             '/' => self.make_token_advance(LexTokenType::Div),
             '?' => self.make_token_advance(LexTokenType::Question),
             ':' => self.make_token_advance(LexTokenType::Colon),
-            '<' => self.make_token_advance(LexTokenType::LessThan),
-            '>' => self.make_token_advance(LexTokenType::BiggerThan),
+            '<' => self.read_lt(),
+            '>' => self.read_gt(),
             '(' => self.make_token_advance(LexTokenType::LParen),
             ')' => self.make_token_advance(LexTokenType::RParen),
             '[' => self.make_token_advance(LexTokenType::LSquare),
@@ -365,6 +393,18 @@ mod tests {
         assert_eq!(res[1].ty, LexTokenType::Plus);
         assert_eq!(res[2].ty, LexTokenType::MinusMinus);
         assert_eq!(res[3].ty, LexTokenType::MinusMinus);
+    }
+
+    #[test]
+    fn simple_statements() {
+        let mut lexer = Lexer::new("return break continue Continue");
+        let res = lexer.read();
+
+        assert_eq!(res.len(), 5);
+        assert_eq!(res[0].ty, LexTokenType::Return);
+        assert_eq!(res[1].ty, LexTokenType::Break);
+        assert_eq!(res[2].ty, LexTokenType::Continue);
+        assert_eq!(res[3].ty, LexTokenType::Identifier);
     }
 
 }
