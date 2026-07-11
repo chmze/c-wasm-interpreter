@@ -129,6 +129,21 @@ pub struct ASTWhile {
     pub body: Vec<ASTNode>,
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ASTForInit {
+    Decl(ASTVar),
+    Expr(ASTExpression),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ASTFor {
+    pub init: Option<ASTForInit>,
+    pub cond: Option<ASTExpression>,
+    pub iter: Option<ASTExpression>,
+    pub body: Vec<ASTNode>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ASTBreak {
 }
@@ -152,6 +167,7 @@ pub enum ASTNodeType {
 
     If(ASTIf),
     While(ASTWhile),
+    For(ASTFor),
     Break(ASTBreak),
     Continue(ASTContinue),
     Return(ASTReturn),
@@ -167,6 +183,13 @@ pub struct ASTNode {
 impl ASTNode {
     pub fn new(ty: ASTNodeType) -> Self {
         ASTNode { ty }
+    }
+
+    pub fn extract_var(self) -> ASTVar {
+        match self.ty {
+            ASTNodeType::Var(var) => var,
+            _ => panic!("Expected a variable expression"),
+        }
     }
 }
 
@@ -288,10 +311,15 @@ impl Parser {
             LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
             LexTokenType::Assign => (2, 1),
             LexTokenType::LParen => (13, 14),
-            LexTokenType::LSquare => (13, 13),
+            LexTokenType::LSquare | LexTokenType::PlusPlus | LexTokenType::MinusMinus => (13, 14),
             LexTokenType::Question => (4, 3),
             _ => (0, 0),
         }
+    }
+
+    fn parse_unary_expression(&mut self, lhs: ASTExpression, ty: ASTUnaryType) -> Option<ASTExpression> {
+        self.read();
+        Some(ASTExpression::Unary(ASTUnary { ty, expr: Box::new(lhs) }))
     }
 
     fn parse_binary_expression(&mut self, lhs: ASTExpression, min_bp: u8, ty: ASTBinaryType) -> Option<ASTExpression> {
@@ -349,6 +377,8 @@ impl Parser {
             LexTokenType::GreaterThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::GreaterThan),
             LexTokenType::Assign => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Assignment),
             LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
+            LexTokenType::PlusPlus => self.parse_unary_expression(lhs, ASTUnaryType::PostInc),
+            LexTokenType::MinusMinus => self.parse_unary_expression(lhs, ASTUnaryType::PostDec),
             LexTokenType::Question => self.parse_conditional_expression(lhs, min_bp),
             LexTokenType::LParen => self.parse_invocation_expression(lhs, min_bp),
             _ => Some(ASTExpression::Null),
@@ -535,6 +565,44 @@ impl Parser {
         Some(ASTNode::new(ASTNodeType::While(ASTWhile { cond, body })))
     }
 
+    fn try_parse_for_init(&mut self) -> Option<ASTForInit> {
+        let init_pos = self.pos;
+
+        match self.try_parse_var() {
+            Some(node) => {
+                self.set_pos(self.pos - 1); // cancel read semi
+                Some(ASTForInit::Decl(node.extract_var()))
+            }
+            None => {
+                self.set_pos(init_pos);
+                match self.parse_expression(0) {
+                    Some(expr) => Some(ASTForInit::Expr(expr)),
+                    None => {
+                        self.set_pos(init_pos);
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_parse_for(&mut self) -> Option<ASTNode> {
+        self.try_predict_current(LexTokenType::For)?;
+        self.try_predict_current(LexTokenType::LParen)?;
+
+        let init = self.try_parse_for_init();
+        self.try_predict_current(LexTokenType::Semi)?;
+        let cond = self.parse_expression(0);
+        self.try_predict_current(LexTokenType::Semi)?;
+        let iter = self.parse_expression(0);
+
+        self.try_predict_current(LexTokenType::RParen)?;
+
+        let body = self.try_parse_statement_block()?;
+
+        Some(ASTNode::new(ASTNodeType::For(ASTFor { init, cond, iter, body })))
+    }
+
     fn try_parse_break(&mut self) -> Option<ASTNode> {
         self.try_predict_current(LexTokenType::Break)?;
         self.try_predict_current(LexTokenType::Semi)?;
@@ -567,6 +635,7 @@ impl Parser {
         match self.current().ty {
             LexTokenType::If => return self.try_parse_if().unwrap(),
             LexTokenType::While => return self.try_parse_while().unwrap(),
+            LexTokenType::For => return self.try_parse_for().unwrap(),
             LexTokenType::Break => return self.try_parse_break().unwrap(),
             LexTokenType::Continue => return self.try_parse_continue().unwrap(),
             LexTokenType::Return => return self.try_parse_return().unwrap(),
@@ -605,7 +674,9 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::*;
+    use core::panic;
+
+use crate::parser::*;
 
     #[test]
     fn test1() {
@@ -729,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_test_while_single() {
+    fn test_while_single() {
         let mut parser = Parser::new("while (1 + 1) a = a + 1;");
         let res = parser.parse();
         let node = get_first_node(res);
@@ -743,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_test_while_mult() {
+    fn test_while_mult() {
         let mut parser = Parser::new("while (1) { int a = 2; b = b + 1; }");
         let res = parser.parse();
         let node = get_first_node(res);
@@ -753,6 +824,23 @@ mod tests {
                 assert_eq!(wh.body.len(), 2);
             }
             _ => panic!("Expected a while node"),
+        };
+    }
+
+    #[test]
+    fn simple_test_for() {
+        let mut parser = Parser::new("for (int n = 1;; i++) { int a = 2 + 1; }");
+        let res = parser.parse();
+        let node = get_first_node(res);
+
+        match node.ty {
+            ASTNodeType::For(fo) => {
+                assert!(fo.init.is_some());
+                assert!(fo.cond.is_none());
+                assert!(fo.iter.is_some());
+                assert_eq!(fo.body.len(), 1);
+            }
+            _ => panic!("Expected a for node"),
         };
     }
 

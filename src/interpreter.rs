@@ -2,6 +2,7 @@ use std::{collections::HashMap, convert::TryInto};
 
 use crate::parser::*;
 
+#[derive(Debug, Clone, Copy)]
 pub enum StorableValue {
     U8(u8),
     U16(u16),
@@ -268,6 +269,11 @@ macro_rules! apply_logic_binary_op {
     }
 }
 
+macro_rules! apply_preinc_op {
+    ($left:expr, $op:tt) => {
+    };
+}
+
 impl Interpreter {
     pub fn new(s: &str) -> Self {
         let mut parser = Parser::new(s);
@@ -396,6 +402,53 @@ impl Interpreter {
         }
     }
 
+    fn extract_lvalue(&self, expr: ASTExpression) -> ASTIdentifier {
+        match expr {
+            ASTExpression::Identifier(ident) => ident,
+            _ => panic!("Expected an lvalue"), // TODO: handle more expressions in later versions
+        }
+    }
+
+    fn exec_unary_preop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
+        let lval = self.extract_lvalue(*unary.expr).literal;
+        let var = self.env.get_var(&lval).unwrap();
+        let value = self.memory.read(var.address, &var.ty);
+        let res = f(value)?;
+
+        self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
+        Some(res)
+    }
+
+    fn exec_unary_postop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
+        let lval = self.extract_lvalue(*unary.expr).literal;
+        let var = self.env.get_var(&lval).unwrap();
+        let value = self.memory.read(var.address, &var.ty);
+        let res = f(value)?;
+
+        self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
+        Some(value)
+    }
+
+    fn exec_unary(&mut self, unary: ASTUnary) -> Option<StorableValue> {
+        match unary.ty {
+            ASTUnaryType::PreInc => self.exec_unary_preop(unary, |val| apply_binary_op!(val, StorableValue::I32(1), +)),
+            ASTUnaryType::PreDec => self.exec_unary_preop(unary, |val| apply_binary_op!(val, StorableValue::I32(1), -)),
+            ASTUnaryType::PostInc => self.exec_unary_postop(unary, |val| apply_binary_op!(val, StorableValue::I32(1), +)),
+            ASTUnaryType::PostDec => self.exec_unary_postop(unary, |val| apply_binary_op!(val, StorableValue::I32(1), -)),
+            _ => todo!(),
+        }
+    }
+
+    fn exec_assignment(&mut self, binary: ASTBinary) -> Option<StorableValue> {
+        let ident = self.extract_lvalue(*binary.left);
+        let res = self.exec_rvalue_expr(*binary.right)?;
+        
+        let var = self.env.get_var(&ident.literal).unwrap();
+        self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
+
+        Some(res)
+    }
+
     fn exec_binary_arith_logic(&mut self, binary: ASTBinary) -> Option<StorableValue> {
         let left = self.exec_rvalue_expr(*binary.left)?;
         let right = self.exec_rvalue_expr(*binary.right)?;
@@ -412,23 +465,6 @@ impl Interpreter {
             ASTBinaryType::GreaterThan => apply_logic_binary_op!(left, right, >),
             _ => unreachable!(),
         }
-    }
-
-    fn extract_lvalue(&self, expr: ASTExpression) -> ASTIdentifier {
-        match expr {
-            ASTExpression::Identifier(ident) => ident,
-            _ => panic!("Expected an lvalue"), // TODO: handle more expressions
-        }
-    }
-
-    fn exec_assignment(&mut self, binary: ASTBinary) -> Option<StorableValue> {
-        let ident = self.extract_lvalue(*binary.left);
-        let res = self.exec_rvalue_expr(*binary.right)?;
-        
-        let var = self.env.get_var(&ident.literal).unwrap();
-        self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
-
-        Some(res)
     }
 
     fn exec_binary(&mut self, binary: ASTBinary) -> Option<StorableValue> {
@@ -482,6 +518,7 @@ impl Interpreter {
         match expr {
             ASTExpression::Identifier(id) => self.exec_identifier(id),
             ASTExpression::Numeral(numeral) => self.exec_numeral(numeral).map(|r| ExprResult::RValue(r)),
+            ASTExpression::Unary(unary) => self.exec_unary(unary).map(|r| ExprResult::RValue(r)),
             ASTExpression::Binary(binary) => self.exec_binary(binary).map(|r| ExprResult::RValue(r)),
             ASTExpression::Invocation(invocation) => self.exec_invocation(invocation).map(|r| ExprResult::RValue(r)),
             _ => todo!(),
@@ -572,6 +609,41 @@ impl Interpreter {
         Some(ExecResult::None)
     }
 
+    fn exec_for(&mut self, fo: ASTFor) -> Option<ExecResult> {
+        if let Some(init) = fo.init {
+            match init {
+                ASTForInit::Decl(decl) => { self.exec_var(decl); }
+                ASTForInit::Expr(expr) => { self.exec_expr(expr)?; }
+            };
+        }
+
+        'exec: loop {
+            if let Some(cond) = fo.cond.clone() {
+                let res = self.exec_rvalue_expr(cond)?;
+                if !self.is_truthy(res) {
+                    break;
+                }
+            }
+
+            if let Some(iter) = fo.iter.clone() {
+                self.exec_expr(iter);
+            }
+
+            for node in fo.body.clone() {
+                let res = self.exec_node(node)?;
+                
+                match res {
+                    ExecResult::Break => break 'exec,
+                    ExecResult::Continue => break,
+                    ExecResult::Return(val) => return Some(ExecResult::Return(val)),
+                    _ => (),
+                }
+            }
+        }
+
+        Some(ExecResult::None)
+    }
+
     fn exec_break(&mut self, _: ASTBreak) -> ExecResult {
         ExecResult::Break
     }
@@ -600,6 +672,7 @@ impl Interpreter {
 
             ASTNodeType::If(i) => return self.exec_if(i),
             ASTNodeType::While(wh) => return self.exec_while(wh),
+            ASTNodeType::For(fo) => return self.exec_for(fo),
             ASTNodeType::Break(br) => return Some(self.exec_break(br)),
             ASTNodeType::Continue(cn) => return Some(self.exec_continue(cn)),
             ASTNodeType::Return(ret) => return self.exec_return(ret),
@@ -685,11 +758,19 @@ mod tests {
 
     #[test]
     fn simple_while() {
-        let mut i = Interpreter::new("int a = 1; while (a < 5) a = a + 1;");
+        let mut i = Interpreter::new("int a = 1; while (a < 5) a++;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[0], 5);
         assert_eq!(exec.memory[1], 0);
+    }
+
+    #[test]
+    fn simple_for() {
+        let mut i = Interpreter::new("int b = 1; for (int a = 0; a < 5; a++) b = b + a;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        panic!();
     }
 
     #[test]

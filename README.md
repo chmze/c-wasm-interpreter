@@ -6,15 +6,15 @@ Web-based interpret of a subset of the C programming language subset written wit
 
 - [x] Primitive data types
 - [x] Type conversion
-- [ ] Numerals (remaining: hex, octal)
 - [x] Custom memory model
 - [x] Conditionals
-- [ ] Loops (remaining: for)
-- [ ] Expressions (various missing)
+- [x] Loops
+- [ ] Basic expressions (some missing)
 - [x] Call stack, functions, and recursion
 - [ ] Printing
 - [x] Comprehensive unit tests
 - [ ] Website (remaining: UI)
+- [ ] Numerals (remaining: hex, octal, binary)
 
 ### Planned for next versions
 
@@ -48,6 +48,7 @@ The first 4 bytes contain the result (`fib(10) = 55`); remaining memory demonstr
 
 ### Run
 
+`cargo build`
 `npm run dev`
 
 ### Test
