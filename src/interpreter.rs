@@ -705,7 +705,7 @@ mod tests {
         let mut i = Interpreter::new("int fib(int n) { if (n <= 1) return n; return fib(n - 1) + fib(n - 2); } int result = fib(10);");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!();
+        assert_eq!(exec.memory[0], 55);
     }
 
 }

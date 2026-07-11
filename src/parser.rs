@@ -808,8 +808,7 @@ mod tests {
                 assert_eq!(func.params.len(), 0);
                 assert_eq!(func.body.len(), 2);
 
-        println!("{:?}", func.body);
-        panic!();
+                println!("{:?}", func.body);
             }
             _ => panic!("Expected a function node"),
         };

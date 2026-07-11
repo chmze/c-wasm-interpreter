@@ -2,7 +2,18 @@
 
 Web-based interpret of the C programming language subset written with React (TypeScript) and WASM in Rust.
 
-Work in progress. Already finished results are described in the next section.
+## Features
+
+- [x] Primitive data types
+- [x] Full memory model
+- [x] Expressions
+- [ ] Conditionals (remaining: else clause)
+- [ ] Loops (remaining: for)
+- [x] Function stack, return, and recursion
+
+### Planned for next version
+
+- [ ] Complex data types (structs, pointers)
 
 ## Execution demos
 
@@ -15,15 +26,15 @@ int fib(int n) {
 }
 ```
 
-For `fib(10)` the produced memory is:
+For `fib(10)`, the produced memory is:
 
 `[55, 0, 0, 0, 8, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`
 
-The first 4 bytes contain the final result (`fib(10) = 55`); remaining memory demonstrates remaining values from other stack frames.
+The first 4 bytes contain the result (`fib(10) = 55`); remaining memory demonstrates surviving values from other stack frames.
 
-## Instructinos
+## Instructions
 
-### Build
+### Install
 
 `npm i --legacy-peer-deps`
 
