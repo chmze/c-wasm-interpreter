@@ -770,7 +770,7 @@ mod tests {
         let mut i = Interpreter::new("int b = 1; for (int a = 0; a < 5; a++) b = b + a;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
-        panic!();
+        assert_eq!(exec.memory[0], 16);
     }
 
     #[test]
