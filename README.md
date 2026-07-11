@@ -1,19 +1,27 @@
 # c-wasm-interpreter
 
-Web-based interpret of the C programming language subset written with React (TypeScript) and WASM in Rust.
+Web-based interpret of a subset of the C programming language subset written with React (TypeScript) and WASM in Rust.
 
 ## Features
 
 - [x] Primitive data types
-- [x] Full memory model
-- [x] Expressions
-- [ ] Conditionals (remaining: else clause)
+- [x] Type conversion
+- [ ] Numerals (remaining: hex, octal)
+- [x] Custom memory model
+- [x] Conditionals
 - [ ] Loops (remaining: for)
-- [x] Function stack, return, and recursion
+- [ ] Expressions (various missing)
+- [x] Call stack, functions, and recursion
+- [ ] Printing
+- [x] Comprehensive unit tests
+- [ ] Website (remaining: UI)
 
-### Planned for next version
+### Planned for next versions
 
-- [ ] Complex data types (structs, pointers)
+- [ ] Arrays
+- [ ] Structs, unions
+- [ ] Pointers
+- [ ] Standard library functions
 
 ## Execution demos
 

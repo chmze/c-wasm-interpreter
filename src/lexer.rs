@@ -16,6 +16,7 @@ pub enum LexTokenType {
     Double,
 
     If,
+    Else,
     While,
     Break,
     Continue,
@@ -180,6 +181,7 @@ impl Lexer {
             "double" => LexTokenType::Double,
 
             "if" => LexTokenType::If,
+            "else" => LexTokenType::Else,
             "while" => LexTokenType::While,
             "break" => LexTokenType::Break,
             "continue" => LexTokenType::Continue,

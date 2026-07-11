@@ -539,11 +539,15 @@ impl Interpreter {
 
     fn exec_if(&mut self, i: ASTIf) -> Option<ExecResult> {
         let cond = self.exec_rvalue_expr(i.cond)?;
-        if !self.is_truthy(cond) {
-            return Some(ExecResult::None);
+        if self.is_truthy(cond) {
+            self.exec_body(i.body)
         }
-
-        self.exec_body(i.body)
+        else {
+            match i.else_body {
+                Some(body) => self.exec_body(body),
+                None => Some(ExecResult::None),
+            }
+        }
     }
 
     fn exec_while(&mut self, wh: ASTWhile) -> Option<ExecResult> {
@@ -669,6 +673,14 @@ mod tests {
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[2], 7);
         assert_eq!(exec.memory[3], 0);
+    }
+
+    #[test]
+    fn simple_if() {
+        let mut i = Interpreter::new("int a = 2; if (a > 3) a = 1; else if (a > 1) a = a + 1;");
+        let exec = i.execute().unwrap();
+        println!("{:?}", &exec.memory[0..50]);
+        assert_eq!(exec.memory[0], 3);
     }
 
     #[test]

@@ -120,6 +120,7 @@ pub struct ASTFunc {
 pub struct ASTIf {
     pub cond: ASTExpression,
     pub body: Vec<ASTNode>,
+    pub else_body: Option<Vec<ASTNode>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -513,7 +514,12 @@ impl Parser {
 
         let body = self.try_parse_statement_block()?;
 
-        Some(ASTNode::new(ASTNodeType::If(ASTIf { cond, body })))
+        let else_body = match self.try_predict_current(LexTokenType::Else) {
+            Some(_) => Some(self.try_parse_statement_block()?),
+            None => None,
+        };
+
+        Some(ASTNode::new(ASTNodeType::If(ASTIf { cond, body, else_body })))
     }
 
     fn try_parse_while(&mut self) -> Option<ASTNode> {
@@ -709,13 +715,14 @@ mod tests {
 
     #[test]
     fn simple_test_if() {
-        let mut parser = Parser::new("if (1 + 0) a = a + 1;");
+        let mut parser = Parser::new("if (1 + 0) a = a + 1; else if (1 + 1) {} else {}");
         let res = parser.parse();
         let node = get_first_node(res);
 
         match node.ty {
             ASTNodeType::If(i) => {
                 assert_eq!(i.body.len(), 1);
+                assert!(i.else_body.is_some());
             }
             _ => panic!("Expected an if node"),
         };
