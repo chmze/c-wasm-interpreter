@@ -34,10 +34,14 @@ pub enum LexTokenType {
 
     Plus,
     PlusPlus,
+    PlusEq,
     Minus,
     MinusMinus,
+    MinusEq,
     Asterisk,
+    MultEq,
     Div,
+    DivEq,
     Question,
     Colon,
 
@@ -249,6 +253,7 @@ impl Lexer {
 
         match peek {
             '+' => self.make_doubled_advance(LexTokenType::PlusPlus),
+            '=' => self.make_doubled_advance(LexTokenType::PlusEq),
             _ => self.make_token_advance(LexTokenType::Plus),
         }
     }
@@ -258,11 +263,30 @@ impl Lexer {
 
         match peek {
             '-' => self.make_doubled_advance(LexTokenType::MinusMinus),
+            '=' => self.make_doubled_advance(LexTokenType::MinusEq),
             _ => self.make_token_advance(LexTokenType::Minus),
         }
     }
 
-    fn read_excl(&mut self) -> LexToken {
+    fn read_asterisk(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::MultEq),
+            _ => self.make_token_advance(LexTokenType::Asterisk),
+        }
+    }
+
+    fn read_slash(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::DivEq),
+            _ => self.make_token_advance(LexTokenType::Div),
+        }
+    }
+
+    fn read_exclamation(&mut self) -> LexToken {
         let peek = self.peek_ch();
 
         match peek {
@@ -312,14 +336,14 @@ impl Lexer {
             ch if ch.is_alphabetic() => self.read_word(),
             ch if ch.is_numeric() => self.read_numeral(),
             '"' => self.read_string(),
-            '!' => self.read_excl(),
+            '!' => self.read_exclamation(),
             '=' => self.read_eq(),
             ',' => self.make_token_advance(LexTokenType::Comma),
             ';' => self.make_token_advance(LexTokenType::Semi),
             '+' => self.read_plus(),
             '-' => self.read_minus(),
-            '*' => self.make_token_advance(LexTokenType::Asterisk),
-            '/' => self.make_token_advance(LexTokenType::Div),
+            '*' => self.read_asterisk(),
+            '/' => self.read_slash(),
             '?' => self.make_token_advance(LexTokenType::Question),
             ':' => self.make_token_advance(LexTokenType::Colon),
             '<' => self.read_lt(),

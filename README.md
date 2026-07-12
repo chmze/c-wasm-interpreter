@@ -9,7 +9,7 @@ Web-based interpret of a subset of the C programming language subset written wit
 - [x] Custom memory model
 - [x] Conditionals
 - [x] Loops
-- [ ] Basic expressions (remaining ~, %, <<, >>, &, ^, |, &&, ||, +=, -=, *=, /=, %=, <<=, >>=, &=, ^=, |=)
+- [ ] Basic expressions (remaining ~, %, <<, >>, &, ^, |, &&, ||, %=, <<=, >>=, &=, ^=, |=)
 - [x] Call stack, functions, and recursion
 - [ ] Printing
 - [x] Comprehensive unit tests

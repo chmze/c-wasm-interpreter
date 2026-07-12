@@ -47,6 +47,10 @@ pub enum ASTBinaryType {
     NotEquals,
     Indexing,
     Assignment,
+    AddEq,
+    SubEq,
+    MultEq,
+    DivEq,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -308,9 +312,12 @@ impl Parser {
 
     fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
         match ty {
-            LexTokenType::Assign => (2, 1),
+            LexTokenType::PlusEq | LexTokenType::MinusEq |
+            LexTokenType::MultEq | LexTokenType::DivEq => (2, 1),
+            LexTokenType::Assign => (4, 3),
             LexTokenType::EqEq | LexTokenType::NotEq => (5, 6),
-            LexTokenType::LessThan | LexTokenType::LessOrEq | LexTokenType::GreaterThan | LexTokenType::GreaterOrEq => (7, 8),
+            LexTokenType::LessThan | LexTokenType::LessOrEq |
+            LexTokenType::GreaterThan | LexTokenType::GreaterOrEq => (7, 8),
             LexTokenType::Question => (8, 7),
             LexTokenType::Plus | LexTokenType::Minus => (9, 10),
             LexTokenType::Asterisk | LexTokenType::Div => (11, 12),
@@ -375,6 +382,10 @@ impl Parser {
             LexTokenType::Minus => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Sub),
             LexTokenType::Asterisk => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Mult),
             LexTokenType::Div => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Div),
+            LexTokenType::PlusEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::AddEq),
+            LexTokenType::MinusEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::SubEq),
+            LexTokenType::MultEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::MultEq),
+            LexTokenType::DivEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::DivEq),
             LexTokenType::LessThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessThan),
             LexTokenType::LessOrEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessOrEq),
             LexTokenType::GreaterThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::GreaterThan),

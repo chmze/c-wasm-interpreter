@@ -269,11 +269,6 @@ macro_rules! apply_logic_binary_op {
     }
 }
 
-macro_rules! apply_preinc_op {
-    ($left:expr, $op:tt) => {
-    };
-}
-
 impl Interpreter {
     pub fn new(s: &str) -> Self {
         let mut parser = Parser::new(s);
@@ -409,8 +404,7 @@ impl Interpreter {
         }
     }
 
-    fn exec_unary_preop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
-        let lval = self.extract_lvalue(*unary.expr).literal;
+    fn exec_preop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, lval: String, f: F) -> Option<StorableValue> {
         let var = self.env.get_var(&lval).unwrap();
         let value = self.memory.read(var.address, &var.ty);
         let res = f(value)?;
@@ -419,14 +413,23 @@ impl Interpreter {
         Some(res)
     }
 
-    fn exec_unary_postop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
+    fn exec_unary_preop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
         let lval = self.extract_lvalue(*unary.expr).literal;
+        self.exec_preop(lval, f)
+    }
+
+    fn exec_postop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, lval: String, f: F) -> Option<StorableValue> {
         let var = self.env.get_var(&lval).unwrap();
         let value = self.memory.read(var.address, &var.ty);
         let res = f(value)?;
 
         self.memory.write_truncated(var.address, &res, self.memory.get_size(&var.ty));
         Some(value)
+    }
+
+    fn exec_unary_postop<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, unary: ASTUnary, f: F) -> Option<StorableValue> {
+        let lval = self.extract_lvalue(*unary.expr).literal;
+        self.exec_postop(lval, f)
     }
 
     fn exec_unary(&mut self, unary: ASTUnary) -> Option<StorableValue> {
@@ -449,9 +452,14 @@ impl Interpreter {
         Some(res)
     }
 
+    fn exec_assignment_op<F: FnOnce(StorableValue) -> Option<StorableValue>>(&mut self, binary: ASTBinary, f: F) -> Option<StorableValue> {
+        let ident = self.extract_lvalue(*binary.left).literal;
+        self.exec_postop(ident, f)
+    }
+
     fn exec_binary_arith_logic(&mut self, binary: ASTBinary) -> Option<StorableValue> {
-        let left = self.exec_rvalue_expr(*binary.left)?;
-        let right = self.exec_rvalue_expr(*binary.right)?;
+        let left = self.exec_rvalue_expr(*binary.clone().left)?;
+        let right = self.exec_rvalue_expr(*binary.clone().right)?;
 
         let (left, right) = self.convert(left, right);
 
@@ -460,6 +468,10 @@ impl Interpreter {
             ASTBinaryType::Sub => apply_binary_op!(left, right, -),
             ASTBinaryType::Mult => apply_binary_op!(left, right, *),
             ASTBinaryType::Div => apply_binary_op!(left, right, /),
+            ASTBinaryType::AddEq => self.exec_assignment_op(binary, |_| apply_binary_op!(left, right, +)),
+            ASTBinaryType::SubEq => self.exec_assignment_op(binary, |_| apply_binary_op!(left, right, -)),
+            ASTBinaryType::MultEq => self.exec_assignment_op(binary, |_| apply_binary_op!(left, right, *)),
+            ASTBinaryType::DivEq => self.exec_assignment_op(binary, |_| apply_binary_op!(left, right, /)),
             ASTBinaryType::LessThan => apply_logic_binary_op!(left, right, <),
             ASTBinaryType::LessOrEq => apply_logic_binary_op!(left, right, <=),
             ASTBinaryType::GreaterThan => apply_logic_binary_op!(left, right, >),
@@ -770,7 +782,7 @@ mod tests {
 
     #[test]
     fn simple_for() {
-        let mut i = Interpreter::new("int b = 1; for (int a = 0; a < 5; a++) b = b + a;");
+        let mut i = Interpreter::new("int b = 1; for (int a = 0; a < 5; a++) b += a;");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[0], 16);
@@ -778,14 +790,14 @@ mod tests {
 
     #[test]
     fn simple_continue() {
-        let mut i = Interpreter::new("int a = 1; while (a < 1) { a = a + 1; }");
+        let mut i = Interpreter::new("int a = 1; while (a < 1) { a++; }");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
     }
 
     #[test]
     fn simple_func() {
-        let mut i = Interpreter::new("int a = 1; void b(int d) { int c = 1; a = a + c + d; } while (a < 10) b(a);");
+        let mut i = Interpreter::new("int a = 1; void b(int d) { int c = 1; a += c + d; } while (a < 10) b(a);");
         let exec = i.execute().unwrap();
         println!("{:?}", &exec.memory[0..50]);
         assert_eq!(exec.memory[0], 15);
