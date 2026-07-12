@@ -42,6 +42,9 @@ pub enum ASTBinaryType {
     LessThan,
     LessOrEq,
     GreaterThan,
+    GreaterOrEq,
+    Equals,
+    NotEquals,
     Indexing,
     Assignment,
 }
@@ -128,7 +131,6 @@ pub struct ASTWhile {
     pub cond: ASTExpression,
     pub body: Vec<ASTNode>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ASTForInit {
@@ -306,13 +308,14 @@ impl Parser {
 
     fn infix_binding_power(&self, ty: LexTokenType) -> (u8, u8) {
         match ty {
-            LexTokenType::LessThan | LexTokenType::LessOrEq | LexTokenType::GreaterThan | LexTokenType::GreaterOrEq => (3, 4),
-            LexTokenType::Plus | LexTokenType::Minus => (5, 6),
-            LexTokenType::Asterisk | LexTokenType::Div => (7, 8),
             LexTokenType::Assign => (2, 1),
-            LexTokenType::LParen => (13, 14),
-            LexTokenType::LSquare | LexTokenType::PlusPlus | LexTokenType::MinusMinus => (13, 14),
-            LexTokenType::Question => (4, 3),
+            LexTokenType::EqEq | LexTokenType::NotEq => (5, 6),
+            LexTokenType::LessThan | LexTokenType::LessOrEq | LexTokenType::GreaterThan | LexTokenType::GreaterOrEq => (7, 8),
+            LexTokenType::Question => (8, 7),
+            LexTokenType::Plus | LexTokenType::Minus => (9, 10),
+            LexTokenType::Asterisk | LexTokenType::Div => (11, 12),
+            LexTokenType::LParen => (17, 18),
+            LexTokenType::LSquare | LexTokenType::PlusPlus | LexTokenType::MinusMinus => (17, 18),
             _ => (0, 0),
         }
     }
@@ -375,6 +378,9 @@ impl Parser {
             LexTokenType::LessThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessThan),
             LexTokenType::LessOrEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::LessOrEq),
             LexTokenType::GreaterThan => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::GreaterThan),
+            LexTokenType::GreaterOrEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::GreaterOrEq),
+            LexTokenType::EqEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Equals),
+            LexTokenType::NotEq => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::NotEquals),
             LexTokenType::Assign => self.parse_binary_expression(lhs, min_bp, ASTBinaryType::Assignment),
             LexTokenType::LSquare => self.parse_indexing_expression(lhs, min_bp),
             LexTokenType::PlusPlus => self.parse_unary_expression(lhs, ASTUnaryType::PostInc),

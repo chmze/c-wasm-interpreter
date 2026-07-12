@@ -463,6 +463,9 @@ impl Interpreter {
             ASTBinaryType::LessThan => apply_logic_binary_op!(left, right, <),
             ASTBinaryType::LessOrEq => apply_logic_binary_op!(left, right, <=),
             ASTBinaryType::GreaterThan => apply_logic_binary_op!(left, right, >),
+            ASTBinaryType::GreaterOrEq => apply_logic_binary_op!(left, right, >=),
+            ASTBinaryType::Equals => apply_logic_binary_op!(left, right, ==),
+            ASTBinaryType::NotEquals => apply_logic_binary_op!(left, right, !=),
             _ => unreachable!(),
         }
     }

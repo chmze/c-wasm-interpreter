@@ -45,6 +45,8 @@ pub enum LexTokenType {
     LessOrEq,
     GreaterThan,
     GreaterOrEq,
+    EqEq,
+    NotEq,
 
     LParen,
     RParen,
@@ -260,6 +262,24 @@ impl Lexer {
         }
     }
 
+    fn read_excl(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::NotEq),
+            _ => self.make_token_advance(LexTokenType::Negation),
+        }
+    }
+
+    fn read_eq(&mut self) -> LexToken {
+        let peek = self.peek_ch();
+
+        match peek {
+            '=' => self.make_doubled_advance(LexTokenType::EqEq),
+            _ => self.make_token_advance(LexTokenType::Assign),
+        }
+    }
+
     fn read_lt(&mut self) -> LexToken {
         let peek = self.peek_ch();
 
@@ -292,8 +312,8 @@ impl Lexer {
             ch if ch.is_alphabetic() => self.read_word(),
             ch if ch.is_numeric() => self.read_numeral(),
             '"' => self.read_string(),
-            '!' => self.make_token_advance(LexTokenType::Negation),
-            '=' => self.make_token_advance(LexTokenType::Assign),
+            '!' => self.read_excl(),
+            '=' => self.read_eq(),
             ',' => self.make_token_advance(LexTokenType::Comma),
             ';' => self.make_token_advance(LexTokenType::Semi),
             '+' => self.read_plus(),

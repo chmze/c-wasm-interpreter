@@ -9,7 +9,7 @@ Web-based interpret of a subset of the C programming language subset written wit
 - [x] Custom memory model
 - [x] Conditionals
 - [x] Loops
-- [ ] Basic expressions (some missing)
+- [ ] Basic expressions (remaining ~, %, <<, >>, &, ^, |, &&, ||, +=, -=, *=, /=, %=, <<=, >>=, &=, ^=, |=)
 - [x] Call stack, functions, and recursion
 - [ ] Printing
 - [x] Comprehensive unit tests
@@ -36,7 +36,7 @@ int fib(int n) {
 
 For `fib(10)`, the produced memory is:
 
-`[55, 0, 0, 0, 8, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`
+`[55, 0, 0, 0, 8, 0, 0, 0, 6, 0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0]`
 
 The first 4 bytes contain the result (`fib(10) = 55`); remaining memory demonstrates surviving values from other stack frames.
 
